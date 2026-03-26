@@ -50,6 +50,14 @@ pub enum Entry {
     compat_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channel_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    webpage_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    view_count: Option<u64>,
   },
 }
 
@@ -167,19 +175,22 @@ pub(crate) async fn handler(
         let parent = entry_path.parent().unwrap_or(Path::new(""));
 
         let thumb_path = find_thumbnail(parent, stem, &canonical_root);
-        let (title, duration_secs, upload_date, description) =
-          read_info_json(parent, stem);
+        let info = read_info_json(parent, stem);
         let compat_path = find_compat(parent, stem, &canonical_root);
 
         videos.push(Entry::Video {
           name,
           path: rel_entry_path,
           thumb_path,
-          title,
-          duration_secs,
-          upload_date,
+          title: info.title,
+          duration_secs: info.duration_secs,
+          upload_date: info.upload_date,
           compat_path,
-          description,
+          description: info.description,
+          channel: info.channel,
+          channel_url: info.channel_url,
+          webpage_url: info.webpage_url,
+          view_count: info.view_count,
         });
       }
     }
@@ -262,33 +273,50 @@ fn find_thumbnail(
   })
 }
 
-fn read_info_json(
-  parent: &Path,
-  stem: &OsStr,
-) -> (Option<String>, Option<f64>, Option<String>, Option<String>) {
+struct InfoJson {
+  title: Option<String>,
+  duration_secs: Option<f64>,
+  upload_date: Option<String>,
+  description: Option<String>,
+  channel: Option<String>,
+  channel_url: Option<String>,
+  webpage_url: Option<String>,
+  view_count: Option<u64>,
+}
+
+fn read_info_json(parent: &Path, stem: &OsStr) -> InfoJson {
   let info_path = sidecar_path(parent, stem, ".info.json");
 
+  let default = InfoJson {
+    title: None,
+    duration_secs: None,
+    upload_date: None,
+    description: None,
+    channel: None,
+    channel_url: None,
+    webpage_url: None,
+    view_count: None,
+  };
+
   let Ok(contents) = fs::read_to_string(&info_path) else {
-    return (None, None, None, None);
+    return default;
   };
 
   let Ok(json) = serde_json::from_str::<Value>(&contents) else {
-    return (None, None, None, None);
+    return default;
   };
 
-  let title = json
-    .get("title")
-    .and_then(Value::as_str)
-    .map(str::to_string);
-  let duration_secs = json.get("duration").and_then(Value::as_f64);
-  let upload_date = json
-    .get("upload_date")
-    .and_then(Value::as_str)
-    .map(str::to_string);
-  let description = json
-    .get("description")
-    .and_then(Value::as_str)
-    .map(str::to_string);
+  let str_field =
+    |key: &str| json.get(key).and_then(Value::as_str).map(str::to_string);
 
-  (title, duration_secs, upload_date, description)
+  InfoJson {
+    title: str_field("title"),
+    duration_secs: json.get("duration").and_then(Value::as_f64),
+    upload_date: str_field("upload_date"),
+    description: str_field("description"),
+    channel: str_field("channel"),
+    channel_url: str_field("channel_url"),
+    webpage_url: str_field("webpage_url"),
+    view_count: json.get("view_count").and_then(Value::as_u64),
+  }
 }

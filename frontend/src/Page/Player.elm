@@ -22,6 +22,10 @@ type alias PlayerState =
     , durationSecs : Maybe Float
     , compatPath : Maybe String
     , description : Maybe String
+    , channel : Maybe String
+    , channelUrl : Maybe String
+    , webpageUrl : Maybe String
+    , viewCount : Maybe Int
     , bufferFraction : Float
     , mediaError : Maybe MediaErrorCode
     }
@@ -83,6 +87,10 @@ update msg model =
                                                 , durationSecs = v.durationSecs
                                                 , compatPath = v.compatPath
                                                 , description = v.description
+                                                , channel = v.channel
+                                                , channelUrl = v.channelUrl
+                                                , webpageUrl = v.webpageUrl
+                                                , viewCount = v.viewCount
                                                 , bufferFraction = 0
                                                 , mediaError = Nothing
                                                 }
@@ -101,6 +109,10 @@ update msg model =
                             , durationSecs = Nothing
                             , compatPath = Nothing
                             , description = Nothing
+                            , channel = Nothing
+                            , channelUrl = Nothing
+                            , webpageUrl = Nothing
+                            , viewCount = Nothing
                             , bufferFraction = 0
                             , mediaError = Nothing
                             }
@@ -120,6 +132,10 @@ update msg model =
                 , durationSecs = Nothing
                 , compatPath = Nothing
                 , description = Nothing
+                , channel = Nothing
+                , channelUrl = Nothing
+                , webpageUrl = Nothing
+                , viewCount = Nothing
                 , bufferFraction = 0
                 , mediaError = Nothing
                 }
@@ -273,6 +289,36 @@ view model =
 
                     Nothing ->
                         text ""
+                , case state.viewCount of
+                    Just n ->
+                        p [] [ text ("Views: " ++ formatViewCount n) ]
+
+                    Nothing ->
+                        text ""
+                , case state.channel of
+                    Just ch ->
+                        p []
+                            [ text "Channel: "
+                            , case state.channelUrl of
+                                Just url ->
+                                    a [ href url, target "_blank", attribute "rel" "noopener noreferrer" ]
+                                        [ text ch ]
+
+                                Nothing ->
+                                    text ch
+                            ]
+
+                    Nothing ->
+                        text ""
+                , case state.webpageUrl of
+                    Just url ->
+                        p []
+                            [ a [ href url, target "_blank", attribute "rel" "noopener noreferrer" ]
+                                [ text "Watch on YouTube" ]
+                            ]
+
+                    Nothing ->
+                        text ""
                 , case state.description of
                     Just desc ->
                         div
@@ -300,7 +346,7 @@ stripTrailingPunct : String -> ( String, String )
 stripTrailingPunct s =
     let
         punctChars =
-            [ '.', ',', ';', ')', ']', '!', '"', '\'', '>' ]
+            [ '.', ',', ';', ')', ']', '!', '"', '\'', '>', '?' ]
 
         dropRight str =
             case String.uncons (String.reverse str) of
@@ -387,6 +433,18 @@ formatDate date =
 
     else
         date
+
+
+formatViewCount : Int -> String
+formatViewCount n =
+    if n >= 1000000 then
+        String.fromFloat (toFloat (n // 100000) / 10) ++ "M"
+
+    else if n >= 1000 then
+        String.fromFloat (toFloat (n // 100) / 10) ++ "K"
+
+    else
+        String.fromInt n
 
 
 formatDuration : Float -> String

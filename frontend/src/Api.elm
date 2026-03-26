@@ -39,6 +39,10 @@ type alias VideoEntry =
     , uploadDate : Maybe String
     , compatPath : Maybe String
     , description : Maybe String
+    , channel : Maybe String
+    , channelUrl : Maybe String
+    , webpageUrl : Maybe String
+    , viewCount : Maybe Int
     }
 
 
@@ -92,16 +96,19 @@ entryDecoder =
                     "video" ->
                         D.map8
                             (\name path thumbPath title durationSecs uploadDate compatPath description ->
-                                Video
-                                    { name = name
-                                    , path = path
-                                    , thumbPath = thumbPath
-                                    , title = title
-                                    , durationSecs = durationSecs
-                                    , uploadDate = uploadDate
-                                    , compatPath = compatPath
-                                    , description = description
-                                    }
+                                { name = name
+                                , path = path
+                                , thumbPath = thumbPath
+                                , title = title
+                                , durationSecs = durationSecs
+                                , uploadDate = uploadDate
+                                , compatPath = compatPath
+                                , description = description
+                                , channel = Nothing
+                                , channelUrl = Nothing
+                                , webpageUrl = Nothing
+                                , viewCount = Nothing
+                                }
                             )
                             (D.field "name" D.string)
                             (D.field "path" D.string)
@@ -111,6 +118,23 @@ entryDecoder =
                             (D.maybe (D.field "upload_date" D.string))
                             (D.maybe (D.field "compat_path" D.string))
                             (D.maybe (D.field "description" D.string))
+                            |> D.andThen
+                                (\partial ->
+                                    D.map4
+                                        (\channel channelUrl webpageUrl viewCount ->
+                                            Video
+                                                { partial
+                                                    | channel = channel
+                                                    , channelUrl = channelUrl
+                                                    , webpageUrl = webpageUrl
+                                                    , viewCount = viewCount
+                                                }
+                                        )
+                                        (D.maybe (D.field "channel" D.string))
+                                        (D.maybe (D.field "channel_url" D.string))
+                                        (D.maybe (D.field "webpage_url" D.string))
+                                        (D.maybe (D.field "view_count" D.int))
+                                )
 
                     _ ->
                         D.fail ("Unknown entry type: " ++ t)
