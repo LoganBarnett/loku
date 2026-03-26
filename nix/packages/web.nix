@@ -38,7 +38,7 @@ let
     installPhase = ''
       mkdir -p $out
       cp elm.js $out/
-      cp dist/index.html $out/
+      cp public/index.html $out/
     '';
   };
 
