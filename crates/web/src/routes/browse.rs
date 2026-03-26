@@ -46,6 +46,8 @@ pub enum Entry {
     duration_secs: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     upload_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compat_path: Option<String>,
   },
 }
 
@@ -164,6 +166,7 @@ pub(crate) async fn handler(
 
         let thumb_path = find_thumbnail(parent, stem, &canonical_root);
         let (title, duration_secs, upload_date) = read_info_json(parent, stem);
+        let compat_path = find_compat(parent, stem, &canonical_root);
 
         videos.push(Entry::Video {
           name,
@@ -172,6 +175,7 @@ pub(crate) async fn handler(
           title,
           duration_secs,
           upload_date,
+          compat_path,
         });
       }
     }
@@ -219,6 +223,21 @@ fn sidecar_path(
   let mut name = stem.to_os_string();
   name.push(suffix);
   parent.join(name)
+}
+
+fn find_compat(
+  parent: &Path,
+  stem: &OsStr,
+  canonical_root: &Path,
+) -> Option<String> {
+  let p = sidecar_path(parent, stem, ".compat.mp4");
+  if p.exists() {
+    p.strip_prefix(canonical_root)
+      .ok()
+      .map(|r| r.to_string_lossy().to_string())
+  } else {
+    None
+  }
 }
 
 fn find_thumbnail(

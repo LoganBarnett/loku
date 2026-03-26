@@ -297,6 +297,13 @@ async fn test_browse_compat_copy_hidden() {
     "compat copy should not appear as a separate entry"
   );
   assert_eq!(entries[0]["name"], "clip.webm");
+  assert!(
+    entries[0]["compat_path"]
+      .as_str()
+      .unwrap()
+      .ends_with("clip.compat.mp4"),
+    "compat_path should point to clip.compat.mp4"
+  );
 }
 
 #[tokio::test]

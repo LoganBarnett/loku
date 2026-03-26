@@ -19,6 +19,7 @@ type alias PlayerState =
     , title : String
     , uploadDate : Maybe String
     , durationSecs : Maybe Float
+    , compatPath : Maybe String
     , mediaError : Maybe MediaErrorCode
     }
 
@@ -79,6 +80,7 @@ update msg model =
                                                         v.title
                                                 , uploadDate = v.uploadDate
                                                 , durationSecs = v.durationSecs
+                                                , compatPath = v.compatPath
                                                 , mediaError = Nothing
                                                 }
 
@@ -94,6 +96,7 @@ update msg model =
                             , title = path
                             , uploadDate = Nothing
                             , durationSecs = Nothing
+                            , compatPath = Nothing
                             , mediaError = Nothing
                             }
             in
@@ -110,6 +113,7 @@ update msg model =
                 , title = path
                 , uploadDate = Nothing
                 , durationSecs = Nothing
+                , compatPath = Nothing
                 , mediaError = Nothing
                 }
             , Cmd.none
@@ -160,15 +164,48 @@ view model =
                             ]
 
                     Nothing ->
-                        video
-                            [ src (Api.videoUrl state.path)
-                            , controls True
-                            , on "error" (D.map MediaError mediaErrorDecoder)
-                            , style "width" "100%"
-                            , style "max-width" "960px"
-                            , style "display" "block"
-                            ]
-                            []
+                        let
+                            videoAttrs =
+                                [ controls True
+                                , style "width" "100%"
+                                , style "max-width" "960px"
+                                , style "display" "block"
+                                ]
+
+                            ( extraAttrs, sources ) =
+                                case state.compatPath of
+                                    Nothing ->
+                                        -- Single source: attach error decoder directly
+                                        -- to the video element where target.error.code
+                                        -- is available.
+                                        ( [ src (Api.videoUrl state.path)
+                                          , on "error" (D.map MediaError mediaErrorDecoder)
+                                          ]
+                                        , []
+                                        )
+
+                                    Just cp ->
+                                        -- Two sources: browser picks the first it can
+                                        -- play. Safari skips WebM and uses the MP4.
+                                        -- Error fires on the last source only if both
+                                        -- fail; source elements have no .error.code so
+                                        -- we use a fixed code.
+                                        ( []
+                                        , [ source
+                                                [ src (Api.videoUrl state.path)
+                                                , type_ "video/webm"
+                                                ]
+                                                []
+                                          , source
+                                                [ src (Api.videoUrl cp)
+                                                , type_ "video/mp4"
+                                                , on "error" (D.succeed (MediaError ErrSrcNotSupported))
+                                                ]
+                                                []
+                                          ]
+                                        )
+                        in
+                        video (videoAttrs ++ extraAttrs) sources
                 , h2 [ style "margin-top" "0.75rem" ] [ text state.title ]
                 , case state.uploadDate of
                     Just date ->
