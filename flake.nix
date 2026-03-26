@@ -66,6 +66,7 @@
       pkgs.jq
       pkgs.elmPackages.elm
       pkgs.elmPackages.elm-format
+      pkgs.elm2nix
     ];
   in {
 
