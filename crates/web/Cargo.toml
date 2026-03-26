@@ -36,3 +36,6 @@ sd-notify = { workspace = true }
 # tracing-journald connects to the systemd journal socket; unix-only.
 [target.'cfg(unix)'.dependencies]
 tracing-journald = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
