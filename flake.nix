@@ -64,6 +64,8 @@
       pkgs.pkg-config
       pkgs.openssl
       pkgs.jq
+      pkgs.elmPackages.elm
+      pkgs.elmPackages.elm-format
     ];
   in {
 

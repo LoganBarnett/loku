@@ -7,7 +7,7 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn test_healthz_endpoint() {
-  let state = AppState::new();
+  let state = AppState::new(std::path::PathBuf::from("."));
   let app = base_router(state);
 
   let response = app
@@ -32,7 +32,7 @@ async fn test_healthz_endpoint() {
 
 #[tokio::test]
 async fn test_metrics_endpoint() {
-  let state = AppState::new();
+  let state = AppState::new(std::path::PathBuf::from("."));
   let app = base_router(state);
 
   let response = app
@@ -60,7 +60,7 @@ async fn test_metrics_endpoint() {
 
 #[tokio::test]
 async fn test_openapi_endpoint() {
-  let state = AppState::new();
+  let state = AppState::new(std::path::PathBuf::from("."));
   let app = base_router(state);
 
   let response = app
@@ -96,7 +96,7 @@ async fn test_openapi_endpoint() {
 
 #[tokio::test]
 async fn test_swagger_ui_redirect() {
-  let state = AppState::new();
+  let state = AppState::new(std::path::PathBuf::from("."));
   let app = base_router(state);
 
   let response = app

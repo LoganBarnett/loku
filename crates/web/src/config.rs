@@ -32,6 +32,9 @@ pub enum ConfigError {
     #[source]
     source: std::net::AddrParseError,
   },
+
+  #[error("Library path does not exist: {path}")]
+  LibraryPathNotFound { path: PathBuf },
 }
 
 #[derive(Debug, Parser)]
@@ -56,6 +59,10 @@ pub struct CliRaw {
   /// Port to bind to
   #[arg(long, env = "PORT")]
   pub port: Option<u16>,
+
+  /// Root directory of the video library
+  #[arg(long, env = "LIBRARY_PATH")]
+  pub library_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -64,6 +71,7 @@ pub struct ConfigFileRaw {
   pub log_format: Option<String>,
   pub host: Option<String>,
   pub port: Option<u16>,
+  pub library_path: Option<PathBuf>,
 }
 
 impl ConfigFileRaw {
@@ -90,6 +98,7 @@ pub struct Config {
   pub log_level: LogLevel,
   pub log_format: LogFormat,
   pub bind_address: SocketAddr,
+  pub library_path: PathBuf,
 }
 
 impl Config {
@@ -139,10 +148,20 @@ impl Config {
           source,
         })?;
 
+    let library_path = cli
+      .library_path
+      .or(config_file.library_path)
+      .unwrap_or_else(|| PathBuf::from("."));
+
+    if !library_path.exists() {
+      return Err(ConfigError::LibraryPathNotFound { path: library_path });
+    }
+
     Ok(Config {
       log_level,
       log_format,
       bind_address,
+      library_path,
     })
   }
 }

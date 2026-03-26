@@ -6,18 +6,22 @@ use axum::{
 };
 use prometheus::{Encoder, IntCounter, Registry, TextEncoder};
 use serde_json::json;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
+use tower_http::services::{ServeDir, ServeFile};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+
+use crate::routes;
 
 #[derive(Clone)]
 pub struct AppState {
   pub registry: Arc<Registry>,
   pub request_counter: IntCounter,
+  pub library_path: PathBuf,
 }
 
 impl AppState {
-  pub fn new() -> Self {
+  pub fn new(library_path: PathBuf) -> Self {
     let registry = Registry::new();
     let request_counter =
       IntCounter::new("http_requests_total", "Total HTTP requests")
@@ -30,6 +34,7 @@ impl AppState {
     Self {
       registry: Arc::new(registry),
       request_counter,
+      library_path,
     }
   }
 }
@@ -46,12 +51,19 @@ pub struct ApiDoc;
 
 pub fn base_router(state: AppState) -> Router {
   let openapi = ApiDoc::openapi();
+  let library_path = state.library_path.clone();
 
   Router::new()
     .route("/healthz", get(healthz))
     .route("/metrics", get(metrics_endpoint))
+    .route("/api/browse", get(routes::browse::handler))
     .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
+    .nest_service("/files", ServeDir::new(&library_path))
     .with_state(state)
+    .fallback_service(
+      ServeDir::new("frontend/dist")
+        .not_found_service(ServeFile::new("frontend/dist/index.html")),
+    )
 }
 
 #[utoipa::path(

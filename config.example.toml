@@ -11,3 +11,4 @@ log_format = "text"  # Options: text, json
 # Web-specific options
 # host = "127.0.0.1"  # Host/IP address to bind to
 # port = 3000         # Port to bind to
+# library_path = "/media/videos"

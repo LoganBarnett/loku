@@ -52,6 +52,12 @@ in
       '';
     };
 
+    libraryPath = lib.mkOption {
+      type = lib.types.path;
+      description = "Root directory of the video library to serve.";
+      example = "/media/videos";
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
       default = "loku-web";
@@ -100,7 +106,8 @@ in
 
         ExecStart = "${cfg.package}/bin/loku-web"
           + " --host ${cfg.host}"
-          + " --port ${toString cfg.port}";
+          + " --port ${toString cfg.port}"
+          + " --library-path ${cfg.libraryPath}";
 
         User = cfg.user;
         Group = cfg.group;
@@ -112,6 +119,11 @@ in
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;
+
+        # Grant read access to the video library.  ProtectSystem = "strict"
+        # makes the whole filesystem read-only by default, so the library
+        # directory must be explicitly allowed.
+        BindReadOnlyPaths = [ cfg.libraryPath ];
       };
     };
   };
