@@ -91,9 +91,6 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        PlayerMsg Player.GoBack ->
-            ( model, Nav.back model.key 1 )
-
         PlayerMsg (Player.MediaError code) ->
             case model.page of
                 PlayerPage subModel ->

@@ -1,9 +1,10 @@
 module Page.Player exposing (Model, Msg(..), init, update, view, mediaErrorMessage)
 
 import Api exposing (Entry(..))
+import Route
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (on, onClick)
+import Html.Events exposing (on)
 import Http
 import Json.Decode as D
 
@@ -37,7 +38,6 @@ type MediaErrorCode
 
 type Msg
     = GotListing (Result Http.Error Api.DirListing)
-    | GoBack
     | VideoCanPlay
     | VideoProgress Float
     | MediaError MediaErrorCode
@@ -61,9 +61,6 @@ init path =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        GoBack ->
-            ( model, Cmd.none )
-
         GotListing (Ok listing) ->
             let
                 path =
@@ -161,11 +158,20 @@ view model =
                 [ text ("Error: " ++ err) ]
 
         Loaded state ->
+            let
+                parentPath =
+                    state.path
+                        |> String.split "/"
+                        |> List.reverse
+                        |> List.drop 1
+                        |> List.reverse
+                        |> String.join "/"
+            in
             div [ style "padding" "1rem" ]
-                [ button
-                    [ onClick GoBack
+                [ a
+                    [ href (Route.toString (Route.Browse parentPath))
                     , style "margin-bottom" "1rem"
-                    , style "cursor" "pointer"
+                    , style "display" "inline-block"
                     ]
                     [ text "← Back" ]
                 , case state.mediaError of
