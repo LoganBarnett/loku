@@ -1,0 +1,76 @@
+#+title:     Loku — Local Roku
+#+author:    Logan Barnett
+#+email:     logustus@gmail.com
+#+language:  en
+
+* Introduction
+
+Loku is a local video browser and player.  Point it at a directory of videos and
+get a browseable, searchable interface in your web browser — no database
+required.
+
+It pairs well with [[https://github.com/yt-dlp/yt-dlp][yt-dlp]]: download a channel's videos alongside their metadata
+and thumbnails, then browse them through Loku as if they were a local streaming
+library.
+
+Key characteristics:
+
+- Browse videos organized by directory hierarchy.
+- Full-text search over yt-dlp metadata (=info.json= files).
+- Thumbnails shown wherever the video player or index provides them.
+- In-browser video playback — no separate media player required.
+- No database; directory listings + lightweight in-memory cache.
+
+* Installation
+
+** From source
+
+Requires Rust (stable) and =cargo=.
+
+#+begin_src sh
+git clone https://github.com/LoganBarnett/loku
+cd loku
+cargo build --release
+#+end_src
+
+The binary is at =target/release/loku-web=.
+
+** With Nix
+
+#+begin_src sh
+nix run github:LoganBarnett/loku
+#+end_src
+
+* Usage
+
+Start the server, pointing it at your video library:
+
+#+begin_src sh
+loku-web --library /path/to/videos
+#+end_src
+
+Then open =http://localhost:3000= in a browser.
+
+| Flag          | Default         | Description                    |
+|---------------+-----------------+--------------------------------|
+| =--library=   | =.=             | Root directory for video files |
+| =--host=      | =127.0.0.1=     | Bind address                   |
+| =--port=      | =3000=          | Bind port                      |
+| =--log-level= | =info=          | Logging verbosity              |
+
+* Gotchas and Tradeoffs
+
+- *No database*: metadata is read from =info.json= files on every request (with
+  an in-memory cache).  Cold startup on very large libraries may be slow.
+- *yt-dlp layout assumed*: metadata search expects =<video>.info.json= files
+  produced by =yt-dlp --write-info-json=.  Plain video files without sidecar
+  JSON are still browseable but unsearchable.
+- *Local only by default*: the default bind is =127.0.0.1=.  Use
+  =--host 0.0.0.0= to expose on the LAN, but there is no authentication.
+
+* Contributing
+
+#+begin_src sh
+cargo test --workspace
+cargo fmt --check
+#+end_src
