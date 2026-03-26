@@ -221,6 +221,41 @@ async fn test_browse_video_with_metadata() {
 }
 
 #[tokio::test]
+async fn test_browse_compat_copy_hidden() {
+  // Companion .compat.mp4 files must not appear as separate entries.
+  let dir = tempfile::tempdir().unwrap();
+  fs::write(dir.path().join("clip.webm"), b"").unwrap();
+  fs::write(dir.path().join("clip.compat.mp4"), b"").unwrap();
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/browse?path=")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  let entries = json["entries"].as_array().unwrap();
+  assert_eq!(
+    entries.len(),
+    1,
+    "compat copy should not appear as a separate entry"
+  );
+  assert_eq!(entries[0]["name"], "clip.webm");
+}
+
+#[tokio::test]
 async fn test_browse_path_traversal_rejected() {
   let dir = tempfile::tempdir().unwrap();
   let app = base_router(AppState::new(

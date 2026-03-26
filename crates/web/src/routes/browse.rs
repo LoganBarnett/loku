@@ -156,6 +156,10 @@ pub(crate) async fn handler(
 
       if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
         let stem = entry_path.file_stem().unwrap_or_default();
+        // Skip companion compatibility copies (e.g. foo.compat.mp4).
+        if stem.to_string_lossy().ends_with(".compat") {
+          continue;
+        }
         let parent = entry_path.parent().unwrap_or(Path::new(""));
 
         let thumb_path = find_thumbnail(parent, stem, &canonical_root);
