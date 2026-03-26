@@ -24,6 +24,9 @@ parse url =
     else if url.path == "/browse" then
         Browse ""
 
+    else if url.path == "/" || url.path == "" then
+        Browse ""
+
     else if String.startsWith "/player/" url.path then
         Player (String.dropLeft 8 url.path |> percentDecode)
 
