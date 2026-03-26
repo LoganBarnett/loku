@@ -21,6 +21,7 @@ type alias PlayerState =
     , uploadDate : Maybe String
     , durationSecs : Maybe Float
     , compatPath : Maybe String
+    , description : Maybe String
     , bufferFraction : Float
     , mediaError : Maybe MediaErrorCode
     }
@@ -81,6 +82,7 @@ update msg model =
                                                 , uploadDate = v.uploadDate
                                                 , durationSecs = v.durationSecs
                                                 , compatPath = v.compatPath
+                                                , description = v.description
                                                 , bufferFraction = 0
                                                 , mediaError = Nothing
                                                 }
@@ -98,6 +100,7 @@ update msg model =
                             , uploadDate = Nothing
                             , durationSecs = Nothing
                             , compatPath = Nothing
+                            , description = Nothing
                             , bufferFraction = 0
                             , mediaError = Nothing
                             }
@@ -116,6 +119,7 @@ update msg model =
                 , uploadDate = Nothing
                 , durationSecs = Nothing
                 , compatPath = Nothing
+                , description = Nothing
                 , bufferFraction = 0
                 , mediaError = Nothing
                 }
@@ -269,7 +273,61 @@ view model =
 
                     Nothing ->
                         text ""
+                , case state.description of
+                    Just desc ->
+                        div
+                            [ style "margin-top" "1rem"
+                            , style "max-width" "960px"
+                            , style "max-height" "14rem"
+                            , style "overflow-y" "auto"
+                            , style "font-size" "0.9rem"
+                            , style "line-height" "1.6"
+                            , style "white-space" "pre-wrap"
+                            , style "word-break" "break-word"
+                            ]
+                            (renderDescription desc)
+
+                    Nothing ->
+                        text ""
                 ]
+
+
+{-| Render a description string, turning http/https tokens into clickable
+links. Newlines are preserved by the parent's white-space: pre-wrap style.
+-}
+renderDescription : String -> List (Html msg)
+renderDescription desc =
+    let
+        isUrl w =
+            String.startsWith "http://" w || String.startsWith "https://" w
+
+        renderWord w =
+            if isUrl w then
+                a
+                    [ href w
+                    , target "_blank"
+                    , attribute "rel" "noopener noreferrer"
+                    ]
+                    [ text w ]
+
+            else
+                text w
+
+        renderLine line =
+            if String.isEmpty line then
+                [ text "\n" ]
+
+            else
+                (line
+                    |> String.words
+                    |> List.map renderWord
+                    |> List.intersperse (text " ")
+                )
+                    ++ [ text "\n" ]
+    in
+    desc
+        |> String.lines
+        |> List.concatMap renderLine
 
 
 loadingPath : Model -> String

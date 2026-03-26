@@ -38,6 +38,7 @@ type alias VideoEntry =
     , durationSecs : Maybe Float
     , uploadDate : Maybe String
     , compatPath : Maybe String
+    , description : Maybe String
     }
 
 
@@ -89,8 +90,8 @@ entryDecoder =
                             (D.field "path" D.string)
 
                     "video" ->
-                        D.map7
-                            (\name path thumbPath title durationSecs uploadDate compatPath ->
+                        D.map8
+                            (\name path thumbPath title durationSecs uploadDate compatPath description ->
                                 Video
                                     { name = name
                                     , path = path
@@ -99,6 +100,7 @@ entryDecoder =
                                     , durationSecs = durationSecs
                                     , uploadDate = uploadDate
                                     , compatPath = compatPath
+                                    , description = description
                                     }
                             )
                             (D.field "name" D.string)
@@ -108,6 +110,7 @@ entryDecoder =
                             (D.maybe (D.field "duration_secs" D.float))
                             (D.maybe (D.field "upload_date" D.string))
                             (D.maybe (D.field "compat_path" D.string))
+                            (D.maybe (D.field "description" D.string))
 
                     _ ->
                         D.fail ("Unknown entry type: " ++ t)

@@ -48,6 +48,8 @@ pub enum Entry {
     upload_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     compat_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
   },
 }
 
@@ -165,7 +167,8 @@ pub(crate) async fn handler(
         let parent = entry_path.parent().unwrap_or(Path::new(""));
 
         let thumb_path = find_thumbnail(parent, stem, &canonical_root);
-        let (title, duration_secs, upload_date) = read_info_json(parent, stem);
+        let (title, duration_secs, upload_date, description) =
+          read_info_json(parent, stem);
         let compat_path = find_compat(parent, stem, &canonical_root);
 
         videos.push(Entry::Video {
@@ -176,6 +179,7 @@ pub(crate) async fn handler(
           duration_secs,
           upload_date,
           compat_path,
+          description,
         });
       }
     }
@@ -261,15 +265,15 @@ fn find_thumbnail(
 fn read_info_json(
   parent: &Path,
   stem: &OsStr,
-) -> (Option<String>, Option<f64>, Option<String>) {
+) -> (Option<String>, Option<f64>, Option<String>, Option<String>) {
   let info_path = sidecar_path(parent, stem, ".info.json");
 
   let Ok(contents) = fs::read_to_string(&info_path) else {
-    return (None, None, None);
+    return (None, None, None, None);
   };
 
   let Ok(json) = serde_json::from_str::<Value>(&contents) else {
-    return (None, None, None);
+    return (None, None, None, None);
   };
 
   let title = json
@@ -281,6 +285,10 @@ fn read_info_json(
     .get("upload_date")
     .and_then(Value::as_str)
     .map(str::to_string);
+  let description = json
+    .get("description")
+    .and_then(Value::as_str)
+    .map(str::to_string);
 
-  (title, duration_secs, upload_date)
+  (title, duration_secs, upload_date, description)
 }
