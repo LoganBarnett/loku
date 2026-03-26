@@ -1,4 +1,4 @@
-module Page.Player exposing (Model, Msg(..), init, update, view)
+module Page.Player exposing (Model, Msg(..), init, update, view, mediaErrorMessage)
 
 import Api exposing (Entry(..))
 import Html exposing (..)

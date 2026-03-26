@@ -32,6 +32,11 @@
 <body>
   <div id="app"></div>
   <script src="/elm.js"></script>
-  <script>Elm.Main.init({ node: document.getElementById('app') });</script>
+  <script>
+    var app = Elm.Main.init({ node: document.getElementById('app') });
+    app.ports.logError.subscribe(function(msg) {
+      console.error('[loku]', msg);
+    });
+  </script>
 </body>
 </html>

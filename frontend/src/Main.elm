@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Browser
 import Browser.Navigation as Nav
@@ -8,6 +8,9 @@ import Page.Browse as Browse
 import Page.Player as Player
 import Route exposing (Route(..))
 import Url exposing (Url)
+
+
+port logError : String -> Cmd msg
 
 
 type Page
@@ -88,6 +91,22 @@ update msg model =
 
         PlayerMsg Player.GoBack ->
             ( model, Nav.back model.key 1 )
+
+        PlayerMsg (Player.MediaError code) ->
+            case model.page of
+                PlayerPage subModel ->
+                    Player.update (Player.MediaError code) subModel
+                        |> Tuple.mapBoth
+                            (\m -> { model | page = PlayerPage m })
+                            (\cmd ->
+                                Cmd.batch
+                                    [ Cmd.map PlayerMsg cmd
+                                    , logError (Player.mediaErrorMessage code)
+                                    ]
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
 
         PlayerMsg subMsg ->
             case model.page of
