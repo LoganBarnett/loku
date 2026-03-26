@@ -208,13 +208,26 @@ pub(crate) async fn handler(
   }))
 }
 
+fn sidecar_path(
+  parent: &Path,
+  stem: &OsStr,
+  suffix: &str,
+) -> std::path::PathBuf {
+  // Append the suffix directly to the stem so that compound-extension names
+  // like "foo.mov.webm" (stem "foo.mov") resolve to "foo.mov.webp" rather
+  // than "foo.webp" as Path::with_extension would produce.
+  let mut name = stem.to_os_string();
+  name.push(suffix);
+  parent.join(name)
+}
+
 fn find_thumbnail(
   parent: &Path,
   stem: &OsStr,
   canonical_root: &Path,
 ) -> Option<String> {
   THUMB_EXTENSIONS.iter().find_map(|ext| {
-    let thumb = parent.join(stem).with_extension(ext);
+    let thumb = sidecar_path(parent, stem, &format!(".{ext}"));
     if thumb.exists() {
       thumb
         .strip_prefix(canonical_root)
@@ -230,7 +243,7 @@ fn read_info_json(
   parent: &Path,
   stem: &OsStr,
 ) -> (Option<String>, Option<f64>, Option<String>) {
-  let info_path = parent.join(stem).with_extension("info.json");
+  let info_path = sidecar_path(parent, stem, ".info.json");
 
   let Ok(contents) = fs::read_to_string(&info_path) else {
     return (None, None, None);

@@ -221,6 +221,50 @@ async fn test_browse_video_with_metadata() {
 }
 
 #[tokio::test]
+async fn test_browse_compound_extension_sidecars() {
+  // Files like "clip.mov.webm" have stem "clip.mov"; sidecars must be found
+  // as "clip.mov.webp" / "clip.mov.info.json", not "clip.webp" / "clip.info.json".
+  let dir = tempfile::tempdir().unwrap();
+  fs::write(dir.path().join("clip.mov.webm"), b"").unwrap();
+  fs::write(dir.path().join("clip.mov.webp"), b"").unwrap();
+  fs::write(
+    dir.path().join("clip.mov.info.json"),
+    r#"{"title":"Compound","duration":42.0,"upload_date":"20240601"}"#,
+  )
+  .unwrap();
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/browse?path=")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  let entries = json["entries"].as_array().unwrap();
+  assert_eq!(entries.len(), 1);
+  let v = &entries[0];
+  assert_eq!(v["name"], "clip.mov.webm");
+  assert_eq!(v["title"], "Compound");
+  assert_eq!(v["duration_secs"], 42.0);
+  assert!(
+    v["thumb_path"].as_str().unwrap().ends_with("clip.mov.webp"),
+    "thumb_path should point to clip.mov.webp"
+  );
+}
+
+#[tokio::test]
 async fn test_browse_compat_copy_hidden() {
   // Companion .compat.mp4 files must not appear as separate entries.
   let dir = tempfile::tempdir().unwrap();
