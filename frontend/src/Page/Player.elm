@@ -107,7 +107,7 @@ view model =
             p [ style "padding" "1rem" ] [ text "Loading…" ]
 
         Failed err ->
-            p [ style "padding" "1rem", style "color" "#f88" ]
+            p [ style "padding" "1rem", style "color" "var(--color-error)" ]
                 [ text ("Error: " ++ err) ]
 
         Loaded state ->

@@ -39,7 +39,7 @@ view model =
             p [ style "padding" "1rem" ] [ text ("Loading " ++ path ++ "…") ]
 
         Failed err ->
-            p [ style "padding" "1rem", style "color" "#f88" ]
+            p [ style "padding" "1rem", style "color" "var(--color-error)" ]
                 [ text ("Error: " ++ err) ]
 
         Loaded listing ->
@@ -71,7 +71,7 @@ viewBreadcrumb path =
                 )
                 parts
     in
-    nav [ style "padding" "0.75rem 1rem", style "background" "#1e1e1e" ]
+    nav [ style "padding" "0.75rem 1rem", style "background" "var(--color-surface)" ]
         (a [ href (Route.toString (Route.Browse "")) ] [ text "Home" ]
             :: crumbs
         )
@@ -105,7 +105,7 @@ viewEntry entry =
                             div
                                 [ style "width" "200px"
                                 , style "height" "112px"
-                                , style "background" "#333"
+                                , style "background" "var(--color-placeholder)"
                                 , style "display" "flex"
                                 , style "align-items" "center"
                                 , style "justify-content" "center"
