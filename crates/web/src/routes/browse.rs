@@ -1,9 +1,11 @@
+use aide::transform::TransformOperation;
 use axum::{
   extract::{Query, State},
   http::StatusCode,
   response::{IntoResponse, Response},
   Json,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{ffi::OsStr, fs, path::Path};
@@ -14,19 +16,19 @@ use crate::web_base::AppState;
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "avi", "mov"];
 const THUMB_EXTENSIONS: &[&str] = &["jpg", "webp", "png"];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct BrowseQuery {
   #[serde(default)]
   pub path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct DirListing {
   pub path: String,
   pub entries: Vec<Entry>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Entry {
   Directory {
@@ -62,6 +64,10 @@ pub(crate) enum BrowseError {
   },
 }
 
+impl aide::operation::OperationOutput for BrowseError {
+  type Inner = Self;
+}
+
 impl IntoResponse for BrowseError {
   fn into_response(self) -> Response {
     let status = match &self {
@@ -73,6 +79,14 @@ impl IntoResponse for BrowseError {
     };
     (status, self.to_string()).into_response()
   }
+}
+
+pub(crate) fn browse_docs(op: TransformOperation) -> TransformOperation {
+  op.description("List videos and subdirectories under a library path.")
+    .response::<200, Json<DirListing>>()
+    .response_with::<400, (), _>(|r| r.description("Path traversal attempt."))
+    .response_with::<404, (), _>(|r| r.description("Directory not found."))
+    .response_with::<500, (), _>(|r| r.description("Failed to read directory."))
 }
 
 pub(crate) async fn handler(

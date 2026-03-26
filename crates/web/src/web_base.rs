@@ -1,3 +1,9 @@
+use aide::{
+  axum::{routing::get_with, ApiRouter},
+  openapi::OpenApi,
+  scalar::Scalar,
+  transform::TransformOperation,
+};
 use axum::{
   http::StatusCode,
   response::{IntoResponse, Response},
@@ -5,11 +11,11 @@ use axum::{
   Json, Router,
 };
 use prometheus::{Encoder, IntCounter, Registry, TextEncoder};
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tower_http::services::{ServeDir, ServeFile};
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
 use crate::routes;
 
@@ -39,60 +45,68 @@ impl AppState {
   }
 }
 
-#[derive(OpenApi)]
-#[openapi(
-    paths(healthz, metrics_endpoint),
-    tags(
-        (name = "health", description = "Health check endpoints"),
-        (name = "metrics", description = "Metrics endpoints")
-    )
-)]
-pub struct ApiDoc;
-
-pub fn base_router(state: AppState) -> Router {
-  let openapi = ApiDoc::openapi();
-  let library_path = state.library_path.clone();
-
-  Router::new()
-    .route("/healthz", get(healthz))
-    .route("/metrics", get(metrics_endpoint))
-    .route("/api/browse", get(routes::browse::handler))
-    .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
-    .nest_service("/files", ServeDir::new(&library_path))
-    .with_state(state)
-    .fallback_service(
-      ServeDir::new("frontend/dist")
-        .not_found_service(ServeFile::new("frontend/dist/index.html")),
-    )
+#[derive(Serialize, JsonSchema)]
+struct HealthResponse {
+  status: String,
 }
 
-#[utoipa::path(
-    get,
-    path = "/healthz",
-    tag = "health",
-    responses(
-        (status = 200, description = "Service is healthy", body = HealthResponse)
-    )
-)]
 async fn healthz() -> Json<HealthResponse> {
   Json(HealthResponse {
     status: "healthy".to_string(),
   })
 }
 
-#[derive(serde::Serialize, utoipa::ToSchema)]
-pub struct HealthResponse {
-  status: String,
+pub fn base_router(state: AppState) -> Router {
+  aide::generate::extract_schemas(true);
+  let library_path = state.library_path.clone();
+  let mut api = OpenApi::default();
+
+  let app_router = ApiRouter::new()
+    .api_route(
+      "/healthz",
+      get_with(healthz, |op: TransformOperation| {
+        op.description("Health check.")
+      }),
+    )
+    .api_route(
+      "/metrics",
+      get_with(metrics_endpoint, |op: TransformOperation| {
+        op.description("Prometheus metrics in text/plain format.")
+      }),
+    )
+    .api_route(
+      "/api/browse",
+      get_with(routes::browse::handler, routes::browse::browse_docs),
+    )
+    .with_state(state)
+    .finish_api_with(&mut api, |a| a.title("loku"));
+
+  let api = Arc::new(api);
+
+  Router::new()
+    .merge(app_router)
+    .route(
+      "/api-docs/openapi.json",
+      get({
+        let api = api.clone();
+        move || async move { Json((*api).clone()) }
+      }),
+    )
+    .route(
+      "/scalar",
+      get(
+        Scalar::new("/api-docs/openapi.json")
+          .with_title("loku")
+          .axum_handler(),
+      ),
+    )
+    .nest_service("/files", ServeDir::new(&library_path))
+    .fallback_service(
+      ServeDir::new("frontend/dist")
+        .not_found_service(ServeFile::new("frontend/dist/index.html")),
+    )
 }
 
-#[utoipa::path(
-    get,
-    path = "/metrics",
-    tag = "metrics",
-    responses(
-        (status = 200, description = "Prometheus metrics", content_type = "text/plain")
-    )
-)]
 async fn metrics_endpoint(
   axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Response {
