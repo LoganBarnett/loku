@@ -20,6 +20,7 @@ type alias PlayerState =
     , uploadDate : Maybe String
     , durationSecs : Maybe Float
     , compatPath : Maybe String
+    , videoReady : Bool
     , mediaError : Maybe MediaErrorCode
     }
 
@@ -37,6 +38,7 @@ type MediaErrorCode
 type Msg
     = GotListing (Result Http.Error Api.DirListing)
     | GoBack
+    | VideoCanPlay
     | MediaError MediaErrorCode
 
 
@@ -81,6 +83,7 @@ update msg model =
                                                 , uploadDate = v.uploadDate
                                                 , durationSecs = v.durationSecs
                                                 , compatPath = v.compatPath
+                                                , videoReady = False
                                                 , mediaError = Nothing
                                                 }
 
@@ -97,6 +100,7 @@ update msg model =
                             , uploadDate = Nothing
                             , durationSecs = Nothing
                             , compatPath = Nothing
+                            , videoReady = False
                             , mediaError = Nothing
                             }
             in
@@ -114,10 +118,19 @@ update msg model =
                 , uploadDate = Nothing
                 , durationSecs = Nothing
                 , compatPath = Nothing
+                , videoReady = False
                 , mediaError = Nothing
                 }
             , Cmd.none
             )
+
+        VideoCanPlay ->
+            case model of
+                Loaded state ->
+                    ( Loaded { state | videoReady = True }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
 
         MediaError code ->
             case model of
@@ -140,7 +153,15 @@ view model =
 
         Loaded state ->
             div [ style "padding" "1rem" ]
-                [ button
+                [ Html.node "style"
+                    []
+                    [ text
+                        ("@keyframes loku-scan"
+                            ++ "{ 0%{ left:-40%;width:40% }"
+                            ++ " 100%{ left:100%;width:40% } }"
+                        )
+                    ]
+                , button
                     [ onClick GoBack
                     , style "margin-bottom" "1rem"
                     , style "cursor" "pointer"
@@ -167,6 +188,7 @@ view model =
                         let
                             videoAttrs =
                                 [ controls True
+                                , on "canplay" (D.succeed VideoCanPlay)
                                 , style "width" "100%"
                                 , style "max-width" "960px"
                                 , style "display" "block"
@@ -205,7 +227,32 @@ view model =
                                           ]
                                         )
                         in
-                        video (videoAttrs ++ extraAttrs) sources
+                        div []
+                            [ if not state.videoReady then
+                                div
+                                    [ style "position" "relative"
+                                    , style "width" "100%"
+                                    , style "max-width" "960px"
+                                    , style "height" "4px"
+                                    , style "background" "var(--color-surface)"
+                                    , style "overflow" "hidden"
+                                    , style "margin-bottom" "0.25rem"
+                                    ]
+                                    [ div
+                                        [ style "position" "absolute"
+                                        , style "top" "0"
+                                        , style "height" "100%"
+                                        , style "width" "40%"
+                                        , style "background" "var(--color-link)"
+                                        , style "animation" "loku-scan 1.4s ease-in-out infinite"
+                                        ]
+                                        []
+                                    ]
+
+                              else
+                                text ""
+                            , video (videoAttrs ++ extraAttrs) sources
+                            ]
                 , h2 [ style "margin-top" "0.75rem" ] [ text state.title ]
                 , case state.uploadDate of
                     Just date ->
