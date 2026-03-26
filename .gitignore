@@ -9,5 +9,6 @@
 # Ignore cargo generated build artifacts.
 target/
 
-# Ignore Elm package cache.
+# Ignore Elm package cache and compiled output.
 elm-stuff/
+frontend/dist/elm.js
