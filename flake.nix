@@ -84,6 +84,15 @@
             sort | \
             sed 's/^/  • /' || echo "  Run 'cargo init' to get started"
 
+          echo ""
+          echo "Elm frontend (frontend/):"
+          echo "  Build:  cd frontend && elm make src/Main.elm --output dist/elm.js"
+          echo "  After changing elm.json dependency versions, regenerate Nix files:"
+          echo "    cd frontend"
+          echo "    elm2nix convert 2>/dev/null > elm-srcs.nix"
+          echo "    elm2nix snapshot"
+          echo "    git add elm-srcs.nix registry.dat && git commit"
+
           # Symlink cargo-husky hooks into .git/hooks/ using paths relative
           # to .git/hooks/ so the repo stays valid after moves or copies.
           _git_root=$(git rev-parse --show-toplevel 2>/dev/null)
