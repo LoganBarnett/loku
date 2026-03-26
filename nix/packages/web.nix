@@ -38,7 +38,11 @@ let
     installPhase = ''
       mkdir -p $out
       cp elm.js $out/
-      cp public/index.html $out/
+      # Stamp the script src with the Nix store hash so each build gets a
+      # unique URL.  Browsers that cached /elm.js from a previous build will
+      # fetch the new /elm.js?v=<hash> URL instead.
+      STORE_HASH=$(basename $out | cut -d'-' -f1)
+      sed "s|/elm.js|/elm.js?v=$STORE_HASH|g" public/index.html > $out/index.html
     '';
   };
 

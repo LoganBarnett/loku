@@ -5,7 +5,7 @@ use aide::{
   transform::TransformOperation,
 };
 use axum::{
-  http::StatusCode,
+  http::{header, HeaderValue, StatusCode},
   response::{IntoResponse, Response},
   routing::get,
   Json, Router,
@@ -15,7 +15,11 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
-use tower_http::services::{ServeDir, ServeFile};
+use tower::ServiceBuilder;
+use tower_http::{
+  services::{ServeDir, ServeFile},
+  set_header::SetResponseHeaderLayer,
+};
 
 use crate::routes;
 
@@ -105,8 +109,16 @@ pub fn base_router(state: AppState) -> Router {
     )
     .nest_service("/files", ServeDir::new(&library_path))
     .fallback_service(
-      ServeDir::new(&frontend_path)
-        .not_found_service(ServeFile::new(frontend_path.join("index.html"))),
+      ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+          header::CACHE_CONTROL,
+          HeaderValue::from_static("no-store"),
+        ))
+        .service(
+          ServeDir::new(&frontend_path).not_found_service(ServeFile::new(
+            frontend_path.join("index.html"),
+          )),
+        ),
     )
 }
 
