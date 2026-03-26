@@ -8,3 +8,6 @@
 
 # Ignore cargo generated build artifacts.
 target/
+
+# Ignore Elm package cache.
+elm-stuff/

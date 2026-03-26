@@ -162,7 +162,8 @@ in
           + (if cfg.socket != null
              then " --listen sd-listen"
              else " --listen ${cfg.host}:${toString cfg.port}")
-          + " --library-path ${cfg.libraryPath}";
+          + " --library-path ${cfg.libraryPath}"
+          + " --frontend-path ${cfg.package}/share/loku-web/frontend";
 
         User = cfg.user;
         Group = cfg.group;

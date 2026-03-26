@@ -8,7 +8,10 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn test_openapi_json_endpoint() {
-  let app = base_router(AppState::new(std::path::PathBuf::from(".")));
+  let app = base_router(AppState::new(
+    std::path::PathBuf::from("."),
+    std::path::PathBuf::from("."),
+  ));
 
   let response = app
     .oneshot(
@@ -34,7 +37,10 @@ async fn test_openapi_json_endpoint() {
 
 #[tokio::test]
 async fn test_scalar_ui_endpoint() {
-  let app = base_router(AppState::new(std::path::PathBuf::from(".")));
+  let app = base_router(AppState::new(
+    std::path::PathBuf::from("."),
+    std::path::PathBuf::from("."),
+  ));
 
   let response = app
     .oneshot(
@@ -61,7 +67,8 @@ async fn test_scalar_ui_endpoint() {
 
 #[tokio::test]
 async fn test_healthz_endpoint() {
-  let state = AppState::new(std::path::PathBuf::from("."));
+  let state =
+    AppState::new(std::path::PathBuf::from("."), std::path::PathBuf::from("."));
   let app = base_router(state);
 
   let response = app
@@ -86,7 +93,8 @@ async fn test_healthz_endpoint() {
 
 #[tokio::test]
 async fn test_metrics_endpoint() {
-  let state = AppState::new(std::path::PathBuf::from("."));
+  let state =
+    AppState::new(std::path::PathBuf::from("."), std::path::PathBuf::from("."));
   let app = base_router(state);
 
   let response = app
@@ -115,7 +123,10 @@ async fn test_metrics_endpoint() {
 #[tokio::test]
 async fn test_browse_empty_root() {
   let dir = tempfile::tempdir().unwrap();
-  let app = base_router(AppState::new(dir.path().to_path_buf()));
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
 
   let response = app
     .oneshot(
@@ -139,7 +150,10 @@ async fn test_browse_empty_root() {
 async fn test_browse_lists_directory_entry() {
   let dir = tempfile::tempdir().unwrap();
   fs::create_dir(dir.path().join("My Channel")).unwrap();
-  let app = base_router(AppState::new(dir.path().to_path_buf()));
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
 
   let response = app
     .oneshot(
@@ -172,7 +186,10 @@ async fn test_browse_video_with_metadata() {
     r#"{"title":"My Clip","duration":90.0,"upload_date":"20240301"}"#,
   )
   .unwrap();
-  let app = base_router(AppState::new(dir.path().to_path_buf()));
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
 
   let response = app
     .oneshot(
@@ -206,7 +223,10 @@ async fn test_browse_video_with_metadata() {
 #[tokio::test]
 async fn test_browse_path_traversal_rejected() {
   let dir = tempfile::tempdir().unwrap();
-  let app = base_router(AppState::new(dir.path().to_path_buf()));
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
 
   // ".." resolves to the parent of the library root, which is outside it.
   let response = app
@@ -225,7 +245,10 @@ async fn test_browse_path_traversal_rejected() {
 #[tokio::test]
 async fn test_browse_missing_directory() {
   let dir = tempfile::tempdir().unwrap();
-  let app = base_router(AppState::new(dir.path().to_path_buf()));
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
 
   let response = app
     .oneshot(

@@ -135,7 +135,7 @@
       cratePackages = pkgs.lib.mapAttrs (key: crate:
         let pkgFile = ./. + "/nix/packages/${key}.nix";
         in if builtins.pathExists pkgFile
-          then import pkgFile { inherit craneLib commonArgs; }
+          then import pkgFile { inherit craneLib commonArgs pkgs; }
           else craneLib.buildPackage (commonArgs // {
             pname = crate.name;
             cargoExtraArgs = "-p ${crate.name}";

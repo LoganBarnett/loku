@@ -59,6 +59,10 @@ pub struct CliRaw {
   /// Root directory of the video library
   #[arg(long, env = "LIBRARY_PATH")]
   pub library_path: Option<PathBuf>,
+
+  /// Directory containing the compiled frontend assets (index.html, elm.js)
+  #[arg(long, env = "FRONTEND_PATH")]
+  pub frontend_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -67,6 +71,7 @@ pub struct ConfigFileRaw {
   pub log_format: Option<String>,
   pub listen: Option<String>,
   pub library_path: Option<PathBuf>,
+  pub frontend_path: Option<PathBuf>,
 }
 
 impl ConfigFileRaw {
@@ -94,6 +99,7 @@ pub struct Config {
   pub log_format: LogFormat,
   pub listen_address: ListenerAddress,
   pub library_path: PathBuf,
+  pub frontend_path: PathBuf,
 }
 
 impl Config {
@@ -149,11 +155,17 @@ impl Config {
       return Err(ConfigError::LibraryPathNotFound { path: library_path });
     }
 
+    let frontend_path = cli
+      .frontend_path
+      .or(config_file.frontend_path)
+      .unwrap_or_else(|| PathBuf::from("frontend/dist"));
+
     Ok(Config {
       log_level,
       log_format,
       listen_address,
       library_path,
+      frontend_path,
     })
   }
 }

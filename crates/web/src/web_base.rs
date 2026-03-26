@@ -24,10 +24,11 @@ pub struct AppState {
   pub registry: Arc<Registry>,
   pub request_counter: IntCounter,
   pub library_path: PathBuf,
+  pub frontend_path: PathBuf,
 }
 
 impl AppState {
-  pub fn new(library_path: PathBuf) -> Self {
+  pub fn new(library_path: PathBuf, frontend_path: PathBuf) -> Self {
     let registry = Registry::new();
     let request_counter =
       IntCounter::new("http_requests_total", "Total HTTP requests")
@@ -41,6 +42,7 @@ impl AppState {
       registry: Arc::new(registry),
       request_counter,
       library_path,
+      frontend_path,
     }
   }
 }
@@ -59,6 +61,7 @@ async fn healthz() -> Json<HealthResponse> {
 pub fn base_router(state: AppState) -> Router {
   aide::generate::extract_schemas(true);
   let library_path = state.library_path.clone();
+  let frontend_path = state.frontend_path.clone();
   let mut api = OpenApi::default();
 
   let app_router = ApiRouter::new()
@@ -102,8 +105,8 @@ pub fn base_router(state: AppState) -> Router {
     )
     .nest_service("/files", ServeDir::new(&library_path))
     .fallback_service(
-      ServeDir::new("frontend/dist")
-        .not_found_service(ServeFile::new("frontend/dist/index.html")),
+      ServeDir::new(&frontend_path)
+        .not_found_service(ServeFile::new(frontend_path.join("index.html"))),
     )
 }
 
