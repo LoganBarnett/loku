@@ -19,14 +19,24 @@ type alias PlayerState =
     , title : String
     , uploadDate : Maybe String
     , durationSecs : Maybe Float
-    , mediaError : Bool
+    , mediaError : Maybe MediaErrorCode
     }
+
+
+{-| MediaError.code values from the HTML media element spec.
+-}
+type MediaErrorCode
+    = ErrAborted
+    | ErrNetwork
+    | ErrDecode
+    | ErrSrcNotSupported
+    | ErrUnknown Int
 
 
 type Msg
     = GotListing (Result Http.Error Api.DirListing)
     | GoBack
-    | MediaError
+    | MediaError MediaErrorCode
 
 
 init : String -> ( Model, Cmd Msg )
@@ -69,7 +79,7 @@ update msg model =
                                                         v.title
                                                 , uploadDate = v.uploadDate
                                                 , durationSecs = v.durationSecs
-                                                , mediaError = False
+                                                , mediaError = Nothing
                                                 }
 
                                         else
@@ -84,7 +94,7 @@ update msg model =
                             , title = path
                             , uploadDate = Nothing
                             , durationSecs = Nothing
-                            , mediaError = False
+                            , mediaError = Nothing
                             }
             in
             ( Loaded matched, Cmd.none )
@@ -100,15 +110,15 @@ update msg model =
                 , title = path
                 , uploadDate = Nothing
                 , durationSecs = Nothing
-                , mediaError = False
+                , mediaError = Nothing
                 }
             , Cmd.none
             )
 
-        MediaError ->
+        MediaError code ->
             case model of
                 Loaded state ->
-                    ( Loaded { state | mediaError = True }, Cmd.none )
+                    ( Loaded { state | mediaError = Just code }, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
@@ -132,32 +142,33 @@ view model =
                     , style "cursor" "pointer"
                     ]
                     [ text "← Back" ]
-                , if state.mediaError then
-                    div
-                        [ style "background" "var(--color-surface)"
-                        , style "padding" "2rem"
-                        , style "max-width" "960px"
-                        , style "text-align" "center"
-                        ]
-                        [ p [ style "color" "var(--color-error)" ]
-                            [ text "Your browser cannot play this video." ]
-                        , a
-                            [ href (Api.videoUrl state.path)
-                            , attribute "download" ""
+                , case state.mediaError of
+                    Just code ->
+                        div
+                            [ style "background" "var(--color-surface)"
+                            , style "padding" "2rem"
+                            , style "max-width" "960px"
+                            , style "text-align" "center"
                             ]
-                            [ text "Download to play in VLC or another media player" ]
-                        ]
+                            [ p [ style "color" "var(--color-error)" ]
+                                [ text (mediaErrorMessage code) ]
+                            , a
+                                [ href (Api.videoUrl state.path)
+                                , attribute "download" ""
+                                ]
+                                [ text "Download to play in VLC or another media player" ]
+                            ]
 
-                  else
-                    video
-                        [ src (Api.videoUrl state.path)
-                        , controls True
-                        , on "error" (D.succeed MediaError)
-                        , style "width" "100%"
-                        , style "max-width" "960px"
-                        , style "display" "block"
-                        ]
-                        []
+                    Nothing ->
+                        video
+                            [ src (Api.videoUrl state.path)
+                            , controls True
+                            , on "error" (D.map MediaError mediaErrorDecoder)
+                            , style "width" "100%"
+                            , style "max-width" "960px"
+                            , style "display" "block"
+                            ]
+                            []
                 , h2 [ style "margin-top" "0.75rem" ] [ text state.title ]
                 , case state.uploadDate of
                     Just date ->
@@ -225,3 +236,45 @@ formatDuration secs =
 
     else
         String.fromInt minutes ++ ":" ++ pad seconds
+
+
+mediaErrorDecoder : D.Decoder MediaErrorCode
+mediaErrorDecoder =
+    D.at [ "target", "error", "code" ] D.int
+        |> D.map
+            (\code ->
+                case code of
+                    1 ->
+                        ErrAborted
+
+                    2 ->
+                        ErrNetwork
+
+                    3 ->
+                        ErrDecode
+
+                    4 ->
+                        ErrSrcNotSupported
+
+                    _ ->
+                        ErrUnknown code
+            )
+
+
+mediaErrorMessage : MediaErrorCode -> String
+mediaErrorMessage code =
+    case code of
+        ErrAborted ->
+            "Playback was aborted."
+
+        ErrNetwork ->
+            "A network error prevented the video from loading."
+
+        ErrDecode ->
+            "The video could not be decoded (codec error)."
+
+        ErrSrcNotSupported ->
+            "This video format is not supported by your browser (AV1/WebM)."
+
+        ErrUnknown n ->
+            "Playback failed (error code " ++ String.fromInt n ++ ")."
