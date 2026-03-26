@@ -37,6 +37,12 @@
     app.ports.logError.subscribe(function(msg) {
       console.error('[loku]', msg);
     });
-  </script>
+    // progress does not bubble, so capture it at the document level.
+    document.addEventListener('progress', function(e) {
+      if (e.target.tagName !== 'VIDEO') return;
+      if (!e.target.buffered.length || !e.target.duration) return;
+      app.ports.videoProgress.send(e.target.buffered.end(0) / e.target.duration);
+    }, true);
+</script>
 </body>
 </html>

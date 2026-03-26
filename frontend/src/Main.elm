@@ -12,6 +12,8 @@ import Url exposing (Url)
 
 port logError : String -> Cmd msg
 
+port videoProgress : (Float -> msg) -> Sub msg
+
 
 type Page
     = BrowsePage Browse.Model
@@ -38,7 +40,7 @@ main =
         { init = init
         , view = view
         , update = update
-        , subscriptions = \_ -> Sub.none
+        , subscriptions = \_ -> videoProgress (PlayerMsg << Player.VideoProgress)
         , onUrlRequest = UrlRequested
         , onUrlChange = UrlChanged
         }

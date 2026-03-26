@@ -20,7 +20,7 @@ type alias PlayerState =
     , uploadDate : Maybe String
     , durationSecs : Maybe Float
     , compatPath : Maybe String
-    , videoReady : Bool
+    , bufferFraction : Float
     , mediaError : Maybe MediaErrorCode
     }
 
@@ -39,6 +39,7 @@ type Msg
     = GotListing (Result Http.Error Api.DirListing)
     | GoBack
     | VideoCanPlay
+    | VideoProgress Float
     | MediaError MediaErrorCode
 
 
@@ -83,7 +84,7 @@ update msg model =
                                                 , uploadDate = v.uploadDate
                                                 , durationSecs = v.durationSecs
                                                 , compatPath = v.compatPath
-                                                , videoReady = False
+                                                , bufferFraction = 0
                                                 , mediaError = Nothing
                                                 }
 
@@ -100,7 +101,7 @@ update msg model =
                             , uploadDate = Nothing
                             , durationSecs = Nothing
                             , compatPath = Nothing
-                            , videoReady = False
+                            , bufferFraction = 0
                             , mediaError = Nothing
                             }
             in
@@ -118,7 +119,7 @@ update msg model =
                 , uploadDate = Nothing
                 , durationSecs = Nothing
                 , compatPath = Nothing
-                , videoReady = False
+                , bufferFraction = 0
                 , mediaError = Nothing
                 }
             , Cmd.none
@@ -127,7 +128,15 @@ update msg model =
         VideoCanPlay ->
             case model of
                 Loaded state ->
-                    ( Loaded { state | videoReady = True }, Cmd.none )
+                    ( Loaded { state | bufferFraction = 1 }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        VideoProgress fraction ->
+            case model of
+                Loaded state ->
+                    ( Loaded { state | bufferFraction = fraction }, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
@@ -153,15 +162,7 @@ view model =
 
         Loaded state ->
             div [ style "padding" "1rem" ]
-                [ Html.node "style"
-                    []
-                    [ text
-                        ("@keyframes loku-scan"
-                            ++ "{ 0%{ left:-40%;width:40% }"
-                            ++ " 100%{ left:100%;width:40% } }"
-                        )
-                    ]
-                , button
+                [ button
                     [ onClick GoBack
                     , style "margin-bottom" "1rem"
                     , style "cursor" "pointer"
@@ -228,23 +229,19 @@ view model =
                                         )
                         in
                         div []
-                            [ if not state.videoReady then
+                            [ if state.bufferFraction < 1 then
                                 div
-                                    [ style "position" "relative"
-                                    , style "width" "100%"
+                                    [ style "width" "100%"
                                     , style "max-width" "960px"
                                     , style "height" "4px"
                                     , style "background" "var(--color-surface)"
-                                    , style "overflow" "hidden"
                                     , style "margin-bottom" "0.25rem"
                                     ]
                                     [ div
-                                        [ style "position" "absolute"
-                                        , style "top" "0"
-                                        , style "height" "100%"
-                                        , style "width" "40%"
+                                        [ style "height" "100%"
+                                        , style "width" (String.fromFloat (state.bufferFraction * 100) ++ "%")
                                         , style "background" "var(--color-link)"
-                                        , style "animation" "loku-scan 1.4s ease-in-out infinite"
+                                        , style "transition" "width 0.3s ease"
                                         ]
                                         []
                                     ]
