@@ -262,3 +262,37 @@ async fn test_browse_missing_directory() {
 
   assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn test_spa_fallback_serves_index_html() {
+  // Any path not matched by a registered route must return 200 with the SPA
+  // index.html, not 404.  This covers direct navigation and page refresh at
+  // /player/<path> and /browse/<path> URLs.
+  let frontend_dir = tempfile::tempdir().unwrap();
+  fs::write(
+    frontend_dir.path().join("index.html"),
+    b"<!doctype html><title>Loku</title>",
+  )
+  .unwrap();
+  let app = base_router(AppState::new(
+    tempfile::tempdir().unwrap().path().to_path_buf(),
+    frontend_dir.path().to_path_buf(),
+  ));
+
+  for path in [
+    "/player/some-video.webm",
+    "/browse/My%20Channel",
+    "/unknown",
+  ] {
+    let response = app
+      .clone()
+      .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(
+      response.status(),
+      StatusCode::OK,
+      "expected 200 for SPA path {path}"
+    );
+  }
+}

@@ -115,9 +115,8 @@ pub fn base_router(state: AppState) -> Router {
           HeaderValue::from_static("no-store"),
         ))
         .service(
-          ServeDir::new(&frontend_path).not_found_service(ServeFile::new(
-            frontend_path.join("index.html"),
-          )),
+          ServeDir::new(&frontend_path)
+            .fallback(ServeFile::new(frontend_path.join("index.html"))),
         ),
     )
 }
