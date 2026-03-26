@@ -86,7 +86,6 @@
 
           echo ""
           echo "Elm frontend (frontend/):"
-          echo "  Build:  cd frontend && elm make src/Main.elm --output dist/elm.js"
           echo "  After changing elm.json dependency versions, regenerate Nix files:"
           echo "    cd frontend"
           echo "    elm2nix convert 2>/dev/null > elm-srcs.nix"
