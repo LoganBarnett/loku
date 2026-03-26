@@ -50,12 +50,22 @@ getBrowse path toMsg =
 
 videoUrl : String -> String
 videoUrl path =
-    "/files/" ++ path
+    "/files/" ++ encodePath path
 
 
 thumbUrl : String -> String
 thumbUrl path =
-    "/files/" ++ path
+    "/files/" ++ encodePath path
+
+
+{-| Percent-encode each path segment individually, preserving slash separators.
+-}
+encodePath : String -> String
+encodePath path =
+    path
+        |> String.split "/"
+        |> List.map Url.percentEncode
+        |> String.join "/"
 
 
 dirListingDecoder : D.Decoder DirListing
