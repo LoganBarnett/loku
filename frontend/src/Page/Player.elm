@@ -292,6 +292,34 @@ view model =
                 ]
 
 
+{-| Strip trailing punctuation characters that are unlikely to be part of a
+URL even though they are technically valid. If they were intentional they
+would normally be percent-encoded.
+-}
+stripTrailingPunct : String -> ( String, String )
+stripTrailingPunct s =
+    let
+        punctChars =
+            [ '.', ',', ';', ')', ']', '!', '"', '\'', '>' ]
+
+        dropRight str =
+            case String.uncons (String.reverse str) of
+                Just ( c, rest ) ->
+                    if List.member c punctChars then
+                        dropRight (String.reverse rest)
+
+                    else
+                        str
+
+                Nothing ->
+                    str
+
+        url =
+            dropRight s
+    in
+    ( url, String.dropLeft (String.length url) s )
+
+
 {-| Render a description string, turning http/https tokens into clickable
 links. Newlines are preserved by the parent's white-space: pre-wrap style.
 -}
@@ -303,12 +331,19 @@ renderDescription desc =
 
         renderWord w =
             if isUrl w then
-                a
-                    [ href w
-                    , target "_blank"
-                    , attribute "rel" "noopener noreferrer"
+                let
+                    ( url, trailing ) =
+                        stripTrailingPunct w
+                in
+                span []
+                    [ a
+                        [ href url
+                        , target "_blank"
+                        , attribute "rel" "noopener noreferrer"
+                        ]
+                        [ text url ]
+                    , text trailing
                     ]
-                    [ text w ]
 
             else
                 text w
