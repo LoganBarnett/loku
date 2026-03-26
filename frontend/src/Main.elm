@@ -48,15 +48,15 @@ main =
 
 init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init _ url key =
-    routeToPage (Route.parse url)
+    routeToPage key (Route.parse url)
         |> Tuple.mapFirst (\page -> { key = key, page = page })
 
 
-routeToPage : Route -> ( Page, Cmd Msg )
-routeToPage route =
+routeToPage : Nav.Key -> Route -> ( Page, Cmd Msg )
+routeToPage key route =
     case route of
-        Route.Browse path ->
-            Browse.init path
+        Route.Browse params ->
+            Browse.init key params
                 |> Tuple.mapBoth BrowsePage (Cmd.map BrowseMsg)
 
         Route.Player path ->
@@ -77,8 +77,31 @@ update msg model =
             ( model, Nav.load url )
 
         UrlChanged url ->
-            routeToPage (Route.parse url)
-                |> Tuple.mapFirst (\page -> { model | page = page })
+            case Route.parse url of
+                Route.Browse params ->
+                    case model.page of
+                        BrowsePage subModel ->
+                            if Browse.currentPath subModel == params.path then
+                                -- Same directory: update query/page without re-fetching.
+                                Browse.updateParams params subModel
+                                    |> Tuple.mapFirst (\m -> { model | page = BrowsePage m })
+                                    |> Tuple.mapSecond (Cmd.map BrowseMsg)
+
+                            else
+                                Browse.init model.key params
+                                    |> Tuple.mapBoth
+                                        (\m -> { model | page = BrowsePage m })
+                                        (Cmd.map BrowseMsg)
+
+                        _ ->
+                            Browse.init model.key params
+                                |> Tuple.mapBoth
+                                    (\m -> { model | page = BrowsePage m })
+                                    (Cmd.map BrowseMsg)
+
+                route ->
+                    routeToPage model.key route
+                        |> Tuple.mapFirst (\page -> { model | page = page })
 
         BrowseMsg subMsg ->
             case model.page of

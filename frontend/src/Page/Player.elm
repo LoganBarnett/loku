@@ -189,7 +189,7 @@ view model =
             in
             div [ style "padding" "1rem" ]
                 [ a
-                    [ href (Route.toString (Route.Browse parentPath))
+                    [ href (Route.toString (Route.Browse { path = parentPath, query = "", page = 1 }))
                     , style "margin-bottom" "1rem"
                     , style "display" "inline-block"
                     ]
