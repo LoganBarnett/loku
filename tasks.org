@@ -3,7 +3,7 @@
 
 * Audit Fixes
 
-** IN-PROGRESS [#A] Return error when library root cannot be canonicalized
+** DONE [#A] Return error when library root cannot be canonicalized
 :PROPERTIES:
 :CATEGORY: security
 :END:
@@ -16,7 +16,7 @@ bypass under certain filesystem conditions (NFS hiccup, permissions error).
 Return =500 Internal Server Error= instead of silently degrading the
 security check.
 
-** TODO [#B] Log warnings on info.json parse failures
+** IN-PROGRESS [#B] Log warnings on info.json parse failures
 :PROPERTIES:
 :CATEGORY: observability
 :END:

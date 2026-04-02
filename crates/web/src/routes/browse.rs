@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{ffi::OsStr, fs, path::Path};
 use thiserror::Error;
+use tracing::warn;
 
 use crate::web_base::AppState;
 
@@ -308,12 +309,21 @@ fn read_info_json(parent: &Path, stem: &OsStr) -> InfoJson {
     view_count: None,
   };
 
-  let Ok(contents) = fs::read_to_string(&info_path) else {
-    return default;
+  let contents = match fs::read_to_string(&info_path) {
+    Ok(c) => c,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return default,
+    Err(e) => {
+      warn!(path = %info_path.display(), error = %e, "Failed to read info.json sidecar");
+      return default;
+    }
   };
 
-  let Ok(json) = serde_json::from_str::<Value>(&contents) else {
-    return default;
+  let json = match serde_json::from_str::<Value>(&contents) {
+    Ok(v) => v,
+    Err(e) => {
+      warn!(path = %info_path.display(), error = %e, "Failed to parse info.json sidecar");
+      return default;
+    }
   };
 
   let str_field =
