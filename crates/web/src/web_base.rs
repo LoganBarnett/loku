@@ -56,10 +56,23 @@ struct HealthResponse {
   status: String,
 }
 
-async fn healthz() -> Json<HealthResponse> {
-  Json(HealthResponse {
-    status: "healthy".to_string(),
-  })
+async fn healthz(
+  axum::extract::State(state): axum::extract::State<AppState>,
+) -> (StatusCode, Json<HealthResponse>) {
+  match std::fs::metadata(&state.library_path) {
+    Ok(_) => (
+      StatusCode::OK,
+      Json(HealthResponse {
+        status: "healthy".to_string(),
+      }),
+    ),
+    Err(_) => (
+      StatusCode::SERVICE_UNAVAILABLE,
+      Json(HealthResponse {
+        status: "unhealthy".to_string(),
+      }),
+    ),
+  }
 }
 
 pub fn base_router(state: AppState) -> Router {
