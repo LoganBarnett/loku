@@ -74,6 +74,12 @@ pub(crate) enum BrowseError {
     path: String,
     source: std::io::Error,
   },
+
+  #[error("Failed to canonicalize library root '{path}': {source}")]
+  LibraryRootCanonicalize {
+    path: String,
+    source: std::io::Error,
+  },
 }
 
 impl aide::operation::OperationOutput for BrowseError {
@@ -85,7 +91,8 @@ impl IntoResponse for BrowseError {
     let status = match &self {
       BrowseError::PathTraversal { .. } => StatusCode::BAD_REQUEST,
       BrowseError::DirectoryNotFound { .. } => StatusCode::NOT_FOUND,
-      BrowseError::LibraryDirectoryRead { .. } => {
+      BrowseError::LibraryDirectoryRead { .. }
+      | BrowseError::LibraryRootCanonicalize { .. } => {
         StatusCode::INTERNAL_SERVER_ERROR
       }
     };
@@ -109,9 +116,12 @@ pub(crate) async fn handler(
 
   // Canonicalize the library root so that prefix checks work correctly even
   // when it contains symlinks or relative components.
-  let canonical_root = library_root
-    .canonicalize()
-    .unwrap_or_else(|_| library_root.clone());
+  let canonical_root = library_root.canonicalize().map_err(|source| {
+    BrowseError::LibraryRootCanonicalize {
+      path: library_root.to_string_lossy().to_string(),
+      source,
+    }
+  })?;
 
   // Strip any leading slash so that joining works regardless of input form.
   let rel_path = params.path.trim_start_matches('/');

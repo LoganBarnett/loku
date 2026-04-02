@@ -1,0 +1,318 @@
+#+title:     Loku Tasks
+#+language:  en
+
+* Audit Fixes
+
+** IN-PROGRESS [#A] Return error when library root cannot be canonicalized
+:PROPERTIES:
+:CATEGORY: security
+:END:
+
+=browse.rs:114= falls back to the raw =library_root= when =canonicalize=
+fails.  The subsequent =starts_with= check compares a canonicalized target
+against a possibly non-canonical root, which could allow a path traversal
+bypass under certain filesystem conditions (NFS hiccup, permissions error).
+
+Return =500 Internal Server Error= instead of silently degrading the
+security check.
+
+** TODO [#B] Log warnings on info.json parse failures
+:PROPERTIES:
+:CATEGORY: observability
+:END:
+
+=browse.rs:301-306= silently discards =info.json= read and parse errors
+via =let Ok(...) = ... else { return default }=.  A truncated or malformed
+sidecar (common after interrupted yt-dlp runs) produces a video entry with
+no metadata and no log message for the operator to diagnose.
+
+Add =warn!= log lines with the file path and the error on both the
+=read_to_string= and =serde_json::from_str= failure branches.
+
+** TODO [#C] Add integration tests for the path traversal check
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+The existing =test_browse_path_traversal_rejected= covers the simple =..=
+case.  Add tests for percent-encoded traversal (=%2e%2e=), nested traversal
+(=sub/../../..=), and (on Unix) symlinks pointing outside the library root.
+
+** TODO [#C] Make healthz verify library path accessibility
+:PROPERTIES:
+:CATEGORY: observability
+:END:
+
+=web_base.rs:59-63= always returns ={"status":"healthy"}= without checking
+that =library_path= exists and is readable.  Call =fs::metadata= on the
+library root and degrade to an unhealthy response when the path is
+inaccessible.  This gives orchestrators and load balancers useful signal.
+
+* Integration Test Suite
+
+Tests below extend =crates/web/tests/integration_test.rs=.  Each test
+exercises a distinct behavior of the API or file-serving layer.
+
+** Browse endpoint
+
+*** TODO Test browse lists multiple video formats
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create files with each supported extension (=.mp4=, =.mkv=, =.webm=,
+=.avi=, =.mov=) and verify all appear as =type: "video"= entries.
+
+*** TODO Test browse ignores non-video files
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Place =.txt=, =.pdf=, =.info.json=, =.jpg=, and =.srt= files (without a
+corresponding video) alongside a single =.mp4= and verify only the video
+appears in the listing.
+
+*** TODO Test browse directories sorted before videos
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create a mix of directories and videos and verify that all directory entries
+appear before all video entries in the response, each group sorted
+alphabetically.
+
+*** TODO Test browse with nested subdirectory navigation
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create =root/a/b/= with a video inside =b/=.  Browse =path=a= should show
+directory =b=.  Browse =path=a/b= should show the video.  Verify relative
+paths are correct at each level.
+
+*** TODO Test browse video without info.json returns null metadata
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create a bare =.mp4= with no =.info.json= sidecar.  Verify the video
+entry appears with =title=, =duration_secs=, =upload_date=, =description=,
+=channel=, =channel_url=, =webpage_url=, and =view_count= all absent from
+the JSON (not present due to =skip_serializing_if=).
+
+*** TODO Test browse with malformed info.json falls back gracefully
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Write a =.info.json= containing invalid JSON (e.g. =not json=).  Verify
+the video still appears in the listing with null metadata fields.
+
+*** TODO Test browse info.json with partial fields
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Write a =.info.json= with only ={"title":"Partial"}= (no =duration=, no
+=upload_date=, etc.).  Verify the title is returned and the missing fields
+are absent.
+
+*** TODO Test browse thumbnail precedence order
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Place =clip.jpg=, =clip.webp=, and =clip.png= alongside =clip.mp4=.
+Verify =thumb_path= points to =clip.jpg= (first in =THUMB_EXTENSIONS=
+order).  Then remove =.jpg= and verify =.webp= is selected.
+
+*** TODO Test browse video with all metadata fields populated
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Write an =info.json= with all fields: =title=, =duration=, =upload_date=,
+=description=, =channel=, =channel_url=, =webpage_url=, =view_count=.
+Verify each field appears in the API response with the correct value and
+type.
+
+*** TODO Test browse with leading-slash path parameter
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Browse with =path=/subdir= (leading slash) and verify it returns the same
+result as =path=subdir=.
+
+*** TODO Test browse percent-encoded path traversal rejected
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Request =path=%2e%2e= and =path=sub%2f..%2f..= and verify both return
+=400 Bad Request=.
+
+*** TODO Test browse nested path traversal rejected
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create =root/sub/= and request =path=sub/../..= to verify the traversal
+is caught even when it starts from a legitimate subdirectory.
+
+*** TODO Test browse with case-insensitive video extensions
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create files with uppercase extensions (=clip.MP4=, =clip.MKV=) and verify
+they are recognized as videos.
+
+*** TODO Test browse info.json with extra unknown fields
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Write an =info.json= with extra keys (={"title":"X","foo":"bar"}=) and
+verify the response includes =title= and ignores the unknown field without
+error.
+
+** File serving
+
+*** TODO Test /files serves video file with correct content type
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Place a =.mp4= file in the library root and request =GET /files/clip.mp4=.
+Verify =200 OK= and that the =Content-Type= header is =video/mp4=.
+
+*** TODO Test /files serves thumbnail with correct content type
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Place a =.jpg= in the library and request =GET /files/thumb.jpg=.  Verify
+=200 OK= and =Content-Type= is =image/jpeg=.
+
+*** TODO Test /files returns 404 for nonexistent file
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Request =GET /files/does-not-exist.mp4= and verify =404=.
+
+*** TODO Test /files serves files from nested directories
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Place a file at =root/sub/clip.mp4= and request =GET /files/sub/clip.mp4=.
+Verify =200 OK= and correct content.
+
+** SPA fallback
+
+*** TODO Test SPA fallback Cache-Control header
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Request an unregistered path (e.g. =/player/clip.mp4=) and verify the
+response has =Cache-Control: no-store= header.
+
+*** TODO Test SPA fallback does not override API routes
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Verify that =/healthz=, =/metrics=, =/api/browse=, and =/api-docs/openapi.json=
+return their API responses (not =index.html=) even when a frontend directory
+with =index.html= is configured.
+
+** Health and metrics
+
+*** TODO Test healthz response structure
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Verify =/healthz= returns JSON with exactly ={status: "healthy"}= — parse
+the body as =serde_json::Value= and assert the =status= key and value.
+
+*** TODO Test metrics content type is text/plain
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Verify =/metrics= returns a =Content-Type= header starting with
+=text/plain=.
+
+** Configuration
+
+*** TODO Test config CLI args override config file values
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Unit-test =Config::from_cli_and_file= with a =CliRaw= that specifies
+=log_level= and a config file that specifies a different one.  Verify the
+CLI value wins.
+
+*** TODO Test config missing library path returns error
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Call =Config::from_cli_and_file= with a =library_path= pointing to a
+nonexistent directory and verify it returns =ConfigError::LibraryPathNotFound=.
+
+*** TODO Test config invalid log level returns error
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Call =Config::from_cli_and_file= with =log_level= set to ="bogus"= and
+verify it returns =ConfigError::Validation=.
+
+*** TODO Test config malformed TOML returns error
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Write a config file with invalid TOML syntax and call
+=ConfigFileRaw::from_file=.  Verify it returns =ConfigError::Parse=.
+
+*** TODO Test config defaults when no file and no CLI args
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Call =Config::from_cli_and_file= with an empty =CliRaw= and no config
+file.  Verify defaults: log level =info=, log format =text=, listen
+address =127.0.0.1:3000=, library path =.=, frontend path =frontend/dist=.
+
+** Edge cases
+
+*** TODO Test browse with special characters in directory names
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create a directory named =My Channel (2024) [HD]= and verify it appears
+correctly in the browse response with the name preserved.
+
+*** TODO Test browse with spaces in video filenames
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create =My Video.mp4= with =My Video.info.json= and =My Video.jpg=.
+Verify the video appears with correct metadata and thumbnail path.
+
+*** TODO Test browse empty subdirectory returns empty entries
+:PROPERTIES:
+:CATEGORY: testing
+:END:
+
+Create =root/empty-dir/= with no contents.  Browse =path=empty-dir= and
+verify =200 OK= with an empty entries array.
