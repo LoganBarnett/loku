@@ -329,6 +329,83 @@ async fn test_browse_path_traversal_rejected() {
 }
 
 #[tokio::test]
+async fn test_browse_percent_encoded_path_traversal_rejected() {
+  let dir = tempfile::tempdir().unwrap();
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
+
+  // %2e%2e is percent-encoded "..".
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/browse?path=%2e%2e")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert!(
+    response.status() == StatusCode::BAD_REQUEST
+      || response.status() == StatusCode::NOT_FOUND,
+    "percent-encoded traversal must not succeed: got {}",
+    response.status()
+  );
+}
+
+#[tokio::test]
+async fn test_browse_nested_path_traversal_rejected() {
+  let dir = tempfile::tempdir().unwrap();
+  fs::create_dir(dir.path().join("sub")).unwrap();
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/browse?path=sub/../../..")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_browse_symlink_outside_library_rejected() {
+  let dir = tempfile::tempdir().unwrap();
+  let outside = tempfile::tempdir().unwrap();
+  fs::write(outside.path().join("secret.mp4"), b"").unwrap();
+
+  std::os::unix::fs::symlink(outside.path(), dir.path().join("escape"))
+    .unwrap();
+  let app = base_router(AppState::new(
+    dir.path().to_path_buf(),
+    std::path::PathBuf::from("."),
+  ));
+
+  // Browsing the symlink target resolves outside the canonical root.
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/browse?path=escape")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn test_browse_missing_directory() {
   let dir = tempfile::tempdir().unwrap();
   let app = base_router(AppState::new(

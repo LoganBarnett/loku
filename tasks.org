@@ -16,7 +16,7 @@ bypass under certain filesystem conditions (NFS hiccup, permissions error).
 Return =500 Internal Server Error= instead of silently degrading the
 security check.
 
-** IN-PROGRESS [#B] Log warnings on info.json parse failures
+** DONE [#B] Log warnings on info.json parse failures
 :PROPERTIES:
 :CATEGORY: observability
 :END:
@@ -29,7 +29,7 @@ no metadata and no log message for the operator to diagnose.
 Add =warn!= log lines with the file path and the error on both the
 =read_to_string= and =serde_json::from_str= failure branches.
 
-** TODO [#C] Add integration tests for the path traversal check
+** IN-PROGRESS [#C] Add integration tests for the path traversal check
 :PROPERTIES:
 :CATEGORY: testing
 :END:
