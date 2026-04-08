@@ -10,7 +10,7 @@ import Json.Decode as D
 
 
 type Model
-    = Loading String
+    = Loading Bool String
     | Loaded PlayerState
     | Failed String
 
@@ -28,6 +28,7 @@ type alias PlayerState =
     , viewCount : Maybe Int
     , bufferFraction : Float
     , mediaError : Maybe MediaErrorCode
+    , canWebm : Bool
     }
 
 
@@ -48,8 +49,8 @@ type Msg
     | MediaError MediaErrorCode
 
 
-init : String -> ( Model, Cmd Msg )
-init path =
+init : Bool -> String -> ( Model, Cmd Msg )
+init canWebm path =
     let
         -- Fetch the parent directory listing to retrieve video metadata.
         parentPath =
@@ -60,7 +61,7 @@ init path =
                 |> List.reverse
                 |> String.join "/"
     in
-    ( Loading path, Api.getBrowse parentPath GotListing )
+    ( Loading canWebm path, Api.getBrowse parentPath GotListing )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -70,6 +71,9 @@ update msg model =
             let
                 path =
                     loadingPath model
+
+                canWebm =
+                    loadingCanWebm model
 
                 matched =
                     listing.entries
@@ -93,6 +97,7 @@ update msg model =
                                                 , viewCount = v.viewCount
                                                 , bufferFraction = 0
                                                 , mediaError = Nothing
+                                                , canWebm = canWebm
                                                 }
 
                                         else
@@ -115,6 +120,7 @@ update msg model =
                             , viewCount = Nothing
                             , bufferFraction = 0
                             , mediaError = Nothing
+                            , canWebm = canWebm
                             }
             in
             ( Loaded matched, Cmd.none )
@@ -124,6 +130,9 @@ update msg model =
             let
                 path =
                     loadingPath model
+
+                canWebm =
+                    loadingCanWebm model
             in
             ( Loaded
                 { path = path
@@ -138,6 +147,7 @@ update msg model =
                 , viewCount = Nothing
                 , bufferFraction = 0
                 , mediaError = Nothing
+                , canWebm = canWebm
                 }
             , Cmd.none
             )
@@ -170,7 +180,7 @@ update msg model =
 view : Model -> Html Msg
 view model =
     case model of
-        Loading _ ->
+        Loading _ _ ->
             p [ style "padding" "1rem" ] [ text "Loading…" ]
 
         Failed err ->
@@ -235,19 +245,29 @@ view model =
 
                                     Just cp ->
                                         -- Two sources: browser picks the first it can
-                                        -- play. Safari skips WebM and uses the MP4.
+                                        -- play. When the browser lacks real WebM
+                                        -- support, put the MP4 first so it plays
+                                        -- immediately instead of probing the WebM.
                                         -- Error fires on the last source only if both
                                         -- fail; source elements have no .error.code so
                                         -- we use a fixed code.
+                                        let
+                                            ( first, second ) =
+                                                if state.canWebm then
+                                                    ( ( Api.videoUrl state.path, "video/webm" )
+                                                    , ( Api.videoUrl cp, "video/mp4" )
+                                                    )
+
+                                                else
+                                                    ( ( Api.videoUrl cp, "video/mp4" )
+                                                    , ( Api.videoUrl state.path, "video/webm" )
+                                                    )
+                                        in
                                         ( []
-                                        , [ source
-                                                [ src (Api.videoUrl state.path)
-                                                , type_ "video/webm"
-                                                ]
-                                                []
+                                        , [ source [ src (Tuple.first first), type_ (Tuple.second first) ] []
                                           , source
-                                                [ src (Api.videoUrl cp)
-                                                , type_ "video/mp4"
+                                                [ src (Tuple.first second)
+                                                , type_ (Tuple.second second)
                                                 , on "error" (D.succeed (MediaError ErrSrcNotSupported))
                                                 ]
                                                 []
@@ -414,11 +434,21 @@ renderDescription desc =
 loadingPath : Model -> String
 loadingPath model =
     case model of
-        Loading p ->
+        Loading _ p ->
             p
 
         _ ->
             ""
+
+
+loadingCanWebm : Model -> Bool
+loadingCanWebm model =
+    case model of
+        Loading cw _ ->
+            cw
+
+        _ ->
+            True
 
 
 {-| Format a yt-dlp upload\_date string (YYYYMMDD) as YYYY-MM-DD. -}

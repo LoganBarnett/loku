@@ -33,7 +33,9 @@
   <div id="app"></div>
   <script src="/elm.js"></script>
   <script>
-    var app = Elm.Main.init({ node: document.getElementById('app') });
+    var v = document.createElement('video');
+    var flags = { canWebm: v.canPlayType('video/webm; codecs="vp9"') !== '' };
+    var app = Elm.Main.init({ node: document.getElementById('app'), flags: flags });
     app.ports.logError.subscribe(function(msg) {
       console.error('[loku]', msg);
     });

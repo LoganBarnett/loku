@@ -21,9 +21,15 @@ type Page
     | NotFoundPage
 
 
+type alias Flags =
+    { canWebm : Bool
+    }
+
+
 type alias Model =
     { key : Nav.Key
     , page : Page
+    , canWebm : Bool
     }
 
 
@@ -34,7 +40,7 @@ type Msg
     | PlayerMsg Player.Msg
 
 
-main : Program () Model Msg
+main : Program Flags Model Msg
 main =
     Browser.application
         { init = init
@@ -46,21 +52,21 @@ main =
         }
 
 
-init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
-init _ url key =
-    routeToPage key (Route.parse url)
-        |> Tuple.mapFirst (\page -> { key = key, page = page })
+init : Flags -> Url -> Nav.Key -> ( Model, Cmd Msg )
+init flags url key =
+    routeToPage key flags.canWebm (Route.parse url)
+        |> Tuple.mapFirst (\page -> { key = key, page = page, canWebm = flags.canWebm })
 
 
-routeToPage : Nav.Key -> Route -> ( Page, Cmd Msg )
-routeToPage key route =
+routeToPage : Nav.Key -> Bool -> Route -> ( Page, Cmd Msg )
+routeToPage key canWebm route =
     case route of
         Route.Browse params ->
             Browse.init key params
                 |> Tuple.mapBoth BrowsePage (Cmd.map BrowseMsg)
 
         Route.Player path ->
-            Player.init path
+            Player.init canWebm path
                 |> Tuple.mapBoth PlayerPage (Cmd.map PlayerMsg)
 
         Route.NotFound ->
@@ -100,7 +106,7 @@ update msg model =
                                     (Cmd.map BrowseMsg)
 
                 route ->
-                    routeToPage model.key route
+                    routeToPage model.key model.canWebm route
                         |> Tuple.mapFirst (\page -> { model | page = page })
 
         BrowseMsg subMsg ->
