@@ -245,22 +245,25 @@ view model =
 
                                     Just cp ->
                                         -- Two sources: browser picks the first it can
-                                        -- play. When the browser lacks real WebM
-                                        -- support, put the MP4 first so it plays
-                                        -- immediately instead of probing the WebM.
+                                        -- play. The type_ attribute lets the browser
+                                        -- skip formats it cannot decode without
+                                        -- downloading the file to probe it.
                                         -- Error fires on the last source only if both
                                         -- fail; source elements have no .error.code so
                                         -- we use a fixed code.
                                         let
+                                            primaryMime =
+                                                mimeTypeFromPath state.path
+
                                             ( first, second ) =
                                                 if state.canWebm then
-                                                    ( ( Api.videoUrl state.path, "video/webm" )
+                                                    ( ( Api.videoUrl state.path, primaryMime )
                                                     , ( Api.videoUrl cp, "video/mp4" )
                                                     )
 
                                                 else
                                                     ( ( Api.videoUrl cp, "video/mp4" )
-                                                    , ( Api.videoUrl state.path, "video/webm" )
+                                                    , ( Api.videoUrl state.path, primaryMime )
                                                     )
                                         in
                                         ( []
@@ -449,6 +452,40 @@ loadingCanWebm model =
 
         _ ->
             True
+
+
+{-| Map a file path's extension to a MIME type so the browser can skip
+formats it cannot decode without downloading the file to probe it.
+-}
+mimeTypeFromPath : String -> String
+mimeTypeFromPath path =
+    let
+        ext =
+            path
+                |> String.split "."
+                |> List.reverse
+                |> List.head
+                |> Maybe.map String.toLower
+                |> Maybe.withDefault ""
+    in
+    case ext of
+        "webm" ->
+            "video/webm"
+
+        "mp4" ->
+            "video/mp4"
+
+        "mkv" ->
+            "video/x-matroska"
+
+        "avi" ->
+            "video/x-msvideo"
+
+        "mov" ->
+            "video/quicktime"
+
+        _ ->
+            "application/octet-stream"
 
 
 {-| Format a yt-dlp upload\_date string (YYYYMMDD) as YYYY-MM-DD. -}
