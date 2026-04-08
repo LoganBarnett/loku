@@ -244,38 +244,56 @@ view model =
                                         )
 
                                     Just cp ->
-                                        -- Two sources: browser picks the first it can
-                                        -- play. The type_ attribute lets the browser
-                                        -- skip formats it cannot decode without
-                                        -- downloading the file to probe it.
                                         -- Error fires on the last source only if both
                                         -- fail; source elements have no .error.code so
                                         -- we use a fixed code.
                                         let
-                                            primaryMime =
-                                                mimeTypeFromPath state.path
-
-                                            ( first, second ) =
-                                                if state.canWebm then
-                                                    ( ( Api.videoUrl state.path, primaryMime )
-                                                    , ( Api.videoUrl cp, "video/mp4" )
-                                                    )
-
-                                                else
-                                                    ( ( Api.videoUrl cp, "video/mp4" )
-                                                    , ( Api.videoUrl state.path, primaryMime )
-                                                    )
+                                            errorAttr =
+                                                on "error" (D.succeed (MediaError ErrSrcNotSupported))
                                         in
-                                        ( []
-                                        , [ source [ src (Tuple.first first), type_ (Tuple.second first) ] []
-                                          , source
-                                                [ src (Tuple.first second)
-                                                , type_ (Tuple.second second)
-                                                , on "error" (D.succeed (MediaError ErrSrcNotSupported))
-                                                ]
-                                                []
-                                          ]
-                                        )
+                                        case mimeTypeFromPath state.path of
+                                            Just mime ->
+                                                -- Web-standard format: type_ hints let the
+                                                -- browser skip instantly; canWebm refines
+                                                -- source order for older Safari.
+                                                let
+                                                    ( first, second ) =
+                                                        if state.canWebm then
+                                                            ( ( Api.videoUrl state.path, mime )
+                                                            , ( Api.videoUrl cp, "video/mp4" )
+                                                            )
+
+                                                        else
+                                                            ( ( Api.videoUrl cp, "video/mp4" )
+                                                            , ( Api.videoUrl state.path, mime )
+                                                            )
+                                                in
+                                                ( []
+                                                , [ source [ src (Tuple.first first), type_ (Tuple.second first) ] []
+                                                  , source
+                                                        [ src (Tuple.first second)
+                                                        , type_ (Tuple.second second)
+                                                        , errorAttr
+                                                        ]
+                                                        []
+                                                  ]
+                                                )
+
+                                            Nothing ->
+                                                -- Non-standard container (MKV, AVI, MOV):
+                                                -- omit type_ so capable browsers play it
+                                                -- directly; others probe the header bytes
+                                                -- and quickly skip to the compat MP4.
+                                                ( []
+                                                , [ source [ src (Api.videoUrl state.path) ] []
+                                                  , source
+                                                        [ src (Api.videoUrl cp)
+                                                        , type_ "video/mp4"
+                                                        , errorAttr
+                                                        ]
+                                                        []
+                                                  ]
+                                                )
                         in
                         div []
                             [ if state.bufferFraction < 1 then
@@ -454,10 +472,11 @@ loadingCanWebm model =
             True
 
 
-{-| Map a file path's extension to a MIME type so the browser can skip
-formats it cannot decode without downloading the file to probe it.
+{-| Map a file path's extension to a web-standard MIME type.  Returns
+Nothing for non-standard containers (MKV, AVI, MOV) so the caller can
+omit the type\_ attribute and let the browser probe the header bytes.
 -}
-mimeTypeFromPath : String -> String
+mimeTypeFromPath : String -> Maybe String
 mimeTypeFromPath path =
     let
         ext =
@@ -470,22 +489,13 @@ mimeTypeFromPath path =
     in
     case ext of
         "webm" ->
-            "video/webm"
+            Just "video/webm"
 
         "mp4" ->
-            "video/mp4"
-
-        "mkv" ->
-            "video/x-matroska"
-
-        "avi" ->
-            "video/x-msvideo"
-
-        "mov" ->
-            "video/quicktime"
+            Just "video/mp4"
 
         _ ->
-            "application/octet-stream"
+            Nothing
 
 
 {-| Format a yt-dlp upload\_date string (YYYYMMDD) as YYYY-MM-DD. -}
