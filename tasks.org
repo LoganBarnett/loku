@@ -4,17 +4,39 @@
 #+language:  en
 #+todo:      TODO NEXT | DONE
 
-* Disc-rip metadata pipeline
+* Disc lifecycle: rip, library, metadata, playback
 
 Bring ripped DVD/Blu-ray dumps up to the same first-class status Loku already
 gives yt-dlp libraries: friendly titles and rich metadata instead of a flat
-bucket of mangled filenames.  The spine is a Kodi-compatible =.nfo= sidecar per
-video, generated from an authoritative TMDB identity, so that both Kodi and Loku
-read the same file.
+bucket of mangled filenames.
 
-The pipeline has four parts: read NFO (consume), write NFO (produce during
-ripping), resolve identity (disc → TMDB id), and handle the existing backlog.
-Design rationale worth preserving inline so it is not re-derived later.
+Governing principle: Loku owns the media lifecycle end to end — input
+(ripping), library (organization and metadata), format (keeping serviceable
+representations), and its own playback.  This is a deliberate consolidation, not
+a set of Unix-style single-purpose tools wired together with systemd.  The merit
+is the guarantee: rip, format, and metadata are one bound concern — consistency
+has to hold from the moment a disc is ripped through to the moment it plays — so
+one system that controls all of them can promise every library item is
+serviceable end to end, which wired-together stages can only hope for.  The spine
+of that guarantee is a Kodi-compatible =.nfo= sidecar per video, generated from
+an authoritative TMDB identity, so the metadata is written once and read by
+everything.
+
+Design rationale is kept inline throughout so it is not re-derived later.
+
+** Scope and boundaries — what Loku does not do
+
+Loku deliberately does not replace Kodi.  Kodi's job is playing to a *specific
+device* — the living-room TV, a set-top box — and that stays Kodi's.  Loku
+governs the pipeline and serves its own network/browser playback; the two
+coexist rather than compete.
+
+That coexistence is the whole reason the NFO and library layout stay
+Kodi-compatible: Loku and Kodi meet at one shared artifact — the authoritative
+library plus its sidecars — and Kodi keeps working as the device front-end by
+reading exactly what Loku produces.  The rule that falls out: if a feature only
+makes sense as "Loku playing to a dedicated device," it is out of scope.  That
+is Kodi's side of the boundary, not Loku's.
 
 ** Consume NFO sidecars
 
@@ -83,6 +105,33 @@ TMDB search, show the top few candidates, let the operator pick (or auto-accept
 a confident single match).  Resolve to a TMDB id *once*, as early as possible,
 and key everything off the id afterward.  Headless rips fall through to the
 resolver chain below.
+
+** Format and compatibility governance
+
+Owning the lifecycle means guaranteeing every library item is actually playable,
+without ever degrading the archival master.  This is the scope the "Loku governs
+everything" decision pulls in, and the part most likely to balloon — bound it
+deliberately.
+
+*** TODO Settle the format policy: master vs. playback representations
+
+The full-quality whole-disc MKV is the archival *master* and the source Kodi
+plays to devices — it is never the thing degraded.  Loku's own in-browser
+playback has narrower codec/container support than a Kodi device, so it may need
+a browser-friendly representation.
+
+Open question to settle before building, since it sets the storage/latency/CPU
+trade-off for the whole system: does Loku (a) produce a derived encode kept
+alongside the master, (b) remux on demand, or (c) transcode on the fly at stream
+time?  Whatever the answer, derived representations are *additive* — the master
+is authoritative and untouched.
+
+*** TODO Track per-item playback compatibility
+
+Loku should know, per library item, whether a directly-playable representation
+exists for its browser player (it already derives MIME type and detects WebM
+capability).  Surface incompatible items explicitly rather than failing
+silently, and drive whichever derivation policy the task above settles on.
 
 ** Resolve identity (disc → TMDB id)
 
