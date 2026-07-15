@@ -1,0 +1,188 @@
+#+title:     Loku Tasks
+#+author:    Logan Barnett
+#+email:     logustus@gmail.com
+#+language:  en
+#+todo:      TODO NEXT | DONE
+
+* Disc-rip metadata pipeline
+
+Bring ripped DVD/Blu-ray dumps up to the same first-class status Loku already
+gives yt-dlp libraries: friendly titles and rich metadata instead of a flat
+bucket of mangled filenames.  The spine is a Kodi-compatible =.nfo= sidecar per
+video, generated from an authoritative TMDB identity, so that both Kodi and Loku
+read the same file.
+
+The pipeline has four parts: read NFO (consume), write NFO (produce during
+ripping), resolve identity (disc → TMDB id), and handle the existing backlog.
+Design rationale worth preserving inline so it is not re-derived later.
+
+** Consume NFO sidecars
+
+*** NEXT Parse Kodi =.nfo= sidecar files
+
+=.nfo= is XML despite the extension.  There is no formal schema — different
+generators (Kodi, tinyMediaManager, FileBot, Sonarr/Radarr) emit different
+subsets — so parse liberally, not strictly.
+
+- Branch on the root element: =<movie>=, =<episodedetails>=, =<tvshow>=.
+- Model nearly every field as optional or repeated (=Option=, =Vec=); tags such
+  as =<genre>=, =<actor>=, =<uniqueid>= legitimately repeat.
+- Tolerate real-world mess: stray HTML entities in =<plot>=, BOMs, mixed
+  encodings, occasionally invalid XML.
+- Tolerate the degenerate foreign case where the whole "NFO" is a single bare
+  URL or IMDb/TMDB id rather than XML.  Loku only needs this for NFOs written by
+  *other* tools; ones Loku writes follow the canonical subset below.
+- Use a forgiving deserializer (=quick-xml= + =serde=).  Name the type =Nfo=
+  (Pascal initialism), not =NFO=.
+
+*** TODO Mirror Kodi's NFO lookup rules
+
+So Loku and Kodi agree on which sidecar belongs to which video:
+
+- =Movie.mkv= → =Movie.nfo= (same basename), else =movie.nfo= in the folder.
+- Episodes → =Episode.nfo= beside the file; series-level data in =tvshow.nfo= at
+  the show-folder level.
+
+*** TODO Surface NFO metadata in the browse/search UI
+
+Friendly titles and metadata should flow into the existing index and full-text
+search the same way yt-dlp =info.json= data does today.  This is the actual
+user-facing payoff — the "big bucket of videos" problem the whole effort exists
+to fix.
+
+** Produce NFO sidecars (fold ripping into Loku)
+
+The decision is that Loku owns the rip, so it is the ultimate consumer and
+producer: rip, resolve identity, write NFO + artwork, done.  This replaces the
+standalone =nixos-modules/makemkv-ripper.nix= service in ~/dev/nix-config over
+time.
+
+*** TODO Own the rip pipeline (invoke =makemkvcon=)
+
+Absorb the ripping the NixOS module does today: scan the disc, rip *all* titles
+(=makemkvcon mkv ... all=), name and place the output.  Policy is "rip the whole
+disc — the disc becomes the offline backup, the rip is authoritative."  Ripping
+everything (not main-title-only) is what keeps our captured structure matched to
+how TheDiscDB catalogs discs.
+
+*** TODO Persist the =makemkvcon -r info= output as a first-class artifact
+
+This is the key fix.  =makemkvcon -r info= emits the structured =TINFO=/=CINFO=
+disc analysis — the exact data TheDiscDB stores and the matching key we need.
+The current NixOS module *generates* it but writes it to a temp dir that is
+=rm -rf='d on success (surfaced to the journal only on *failure*), so it is
+thrown away for every rip that worked.
+
+Capture it at scan time and store it next to the MKVs.  It costs nothing at rip
+time; reconstructing it afterward is lossy or requires re-scanning the disc.
+
+*** TODO Optional attended identity confirmation at rip time
+
+When the disc is in the drive we know the most.  Offer an attended path: run the
+TMDB search, show the top few candidates, let the operator pick (or auto-accept
+a confident single match).  Resolve to a TMDB id *once*, as early as possible,
+and key everything off the id afterward.  Headless rips fall through to the
+resolver chain below.
+
+** Resolve identity (disc → TMDB id)
+
+The disc never carries the friendly metadata; only weak identity hints.  Resolve
+those to a TMDB id, then pull metadata from TMDB.  TheDiscDB provides the
+disc-structure → title bridge that TMDB itself does not.
+
+*** TODO Compute a structural fingerprint from MakeMKV =TINFO=
+
+Fingerprint the *disc structure*, never the output MKV (the MKV is a derived
+artifact and varies by ripper/version/settings, so it is useless as a shared
+key).  The structural fields — per-title duration, size, segment map, chapter
+count — are read off the disc and are deterministic per pressing.
+
+Crucially this is *uniform across DVD and Blu-ray*: MakeMKV normalizes both
+=VIDEO_TS= and =BDMV= into the same title model, so we sit on that abstraction
+rather than the format-specific on-disc structures.
+
+*** TODO Match against a local TheDiscDB mirror
+
+TheDiscDB stores raw =makemkvcon= logs plus a summary mapping and =release.json=;
+it is a dataset (mirror the files locally), not a live query API, and it does no
+matching itself — that is ours to build.
+
+- Match on the *multiset* of (duration, chapter count) across the substantial
+  titles.  Treat size as a weaker/fuzzy signal.
+- Be tolerant of the short-title fringe: MakeMKV version heuristics and the
+  minimum-title-length setting change *which short/decoy titles appear*, but not
+  the durations/segment maps of the real ones.  Keying on the meaty titles
+  designs that drift out.  (Note: this version-drift risk is our concern as the
+  matcher author — TheDiscDB does not acknowledge or handle it.)
+- Low-entropy discs (a single title, no extras) carry too little structure to
+  match confidently.  Send those to the fallback rather than trusting a match.
+
+*** TODO Implement the resolver chain
+
+Ordered strategies, each returning an optional TMDB id; cheap deterministic
+layers first, interactive last:
+
+1. TheDiscDB structural match.
+2. GTIN (barcode) lookup — see below.
+3. Clean title from Blu-ray =BDMV/META/DL/bdmt_*.xml= or the DVD volume label →
+   TMDB text search, auto-accept a confident single match.
+4. Human / LLM "pick one of these candidates" fallback for the tail.
+
+*** TODO Model the barcode as a GTIN, not a "UPC"
+
+The barcode is a globally unique edition key (GS1 hierarchical prefix allocation
+guarantees no cross-border collisions), but it lives on the *packaging*, not the
+disc — so it needs a scan or manual-entry step, and only ever *disambiguates*;
+it does not resolve to metadata by itself.
+
+- Store the full GTIN-13; normalize a 12-digit UPC-A up by left-padding a =0=.
+  Never assume 12 digits — this is exactly what would break Japanese titles,
+  which carry 13-digit JAN/EAN-13 codes (GS1 prefixes =45=/=49=).
+- Name the field/type =Gtin= (Pascal initialism).  TheDiscDB calls its field
+  "UPC" colloquially; feed it the GTIN-13.
+
+*** TODO Cache =fingerprint → tmdb_id= and backfill on miss
+
+A one-table SQLite cache, seeded from TheDiscDB where it has coverage.  Hit →
+instant.  Miss → run the resolver chain, then write the result back so the next
+encounter of that exact pressing is free.  A fingerprint identifies "this exact
+disc," so a *different* pressing of a known title is a fresh miss (then cached) —
+inherent to disc-identity keys and acceptable.
+
+*** TODO TMDB client and NFO/artwork writer
+
+- Resolve by id (=/find= external-id or a direct id lookup) for exact matches,
+  and by =/search= for the bootstrap step.
+- Serialize the returned JSON into the canonical NFO subset plus downloaded
+  artwork.  The reader and writer share one schema, so Loku's parser only has to
+  be bulletproof against *foreign* NFOs.
+- Japanese titles: query with =language=ja= (and keep original-language fields).
+  For anime specifically, AniDB / TheTVDB often map episodes better than TMDB —
+  evaluate when we get there.
+
+** Backlog (already-ripped discs)
+
+The existing rips discarded their =disc-info= logs (deleted on success), so the
+journal *cannot* be scraped to reconstruct TheDiscDB-format logs.  Options, none
+requiring a full re-rip:
+
+*** TODO Decide backlog strategy: re-scan vs. probe vs. one-time resolve
+
+- Re-scan: =makemkvcon -r info= per disc regenerates the exact log in seconds
+  (needs the disc, which the cold-backup policy means we still have).
+- Probe existing MKVs: =ffprobe= / =mkvmerge -i= yields per-title duration and
+  chapter count with no disc handling, but size and segment maps are lost, so
+  the signature is weaker.
+- One-time title resolution (filename/volume-label → TMDB with a human/LLM
+  confirm) may simply be the least work, since the backlog is a bounded,
+  eyeballed job anyway.  Reserve the structural-fingerprint path for go-forward
+  automation, where the no-interaction payoff actually lands.
+
+* Cross-repo
+
+** NEXT Interim: stop discarding =disc-info.txt= in =makemkv-ripper.nix=
+
+In ~/dev/nix-config, until Loku owns ripping, change the NixOS module to persist
+the =makemkvcon -r info= output alongside the MKV output instead of writing it to
+a temp dir that is deleted on success.  Cheap change; prevents the go-forward
+rips from repeating the backlog problem.
