@@ -1,11 +1,11 @@
 module Api exposing
-    ( DirListing
+    ( DirEntry
+    , DirListing
     , Entry(..)
-    , DirEntry
     , VideoEntry
     , getBrowse
-    , videoUrl
     , thumbUrl
+    , videoUrl
     )
 
 import Http

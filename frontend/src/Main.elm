@@ -12,6 +12,7 @@ import Url exposing (Url)
 
 port logError : String -> Cmd msg
 
+
 port videoProgress : (Float -> msg) -> Sub msg
 
 

@@ -1,12 +1,12 @@
-module Page.Player exposing (Model, Msg(..), init, update, view, mediaErrorMessage)
+module Page.Player exposing (Model, Msg(..), init, mediaErrorMessage, update, view)
 
 import Api exposing (Entry(..))
-import Route
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (on)
 import Http
 import Json.Decode as D
+import Route
 
 
 type Model
@@ -106,7 +106,7 @@ update msg model =
 
 
 {-| Search the directory listing for the video matching the given path
-and convert it to a PlayerState.  Falls back to a minimal state when
+and convert it to a PlayerState. Falls back to a minimal state when
 the video is not found in the listing.
 -}
 findVideo : Bool -> String -> List Api.Entry -> PlayerState
@@ -248,7 +248,7 @@ videoAttrs =
 
 
 {-| Build the extra attributes and child source elements for the video
-tag.  Single-source videos attach the error decoder directly; dual-source
+tag. Single-source videos attach the error decoder directly; dual-source
 videos use source elements whose type\_ hints and ordering let the
 browser pick the best format.
 -}
@@ -439,7 +439,7 @@ loadingCanWebm model =
             True
 
 
-{-| Map a file path's extension to a web-standard MIME type.  Returns
+{-| Map a file path's extension to a web-standard MIME type. Returns
 Nothing for non-standard containers (MKV, AVI, MOV) so the caller can
 omit the type\_ attribute and let the browser probe the header bytes.
 -}
@@ -538,7 +538,8 @@ renderDescription desc =
         |> List.concatMap renderLine
 
 
-{-| Format a yt-dlp upload\_date string (YYYYMMDD) as YYYY-MM-DD. -}
+{-| Format a yt-dlp upload\_date string (YYYYMMDD) as YYYY-MM-DD.
+-}
 formatDate : String -> String
 formatDate date =
     if String.length date == 8 then

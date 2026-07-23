@@ -1,0 +1,16 @@
+name: Branch protection
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/branch-protection.json'
+      - '.github/workflows/branch-protection.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    uses: LoganBarnett/rust-template/.github/workflows/reusable-branch-protection.yml@main
+    secrets: inherit
