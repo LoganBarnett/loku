@@ -29,6 +29,12 @@ pub struct DirListing {
   pub entries: Vec<Entry>,
 }
 
+// The `Video` variant carries far more than `Directory`, so
+// `large_enum_variant` fires.  Allowed here (not workspace-wide) because the
+// size is acceptable for now; factoring `Video` into its own type would shrink
+// the enum and give callers that only handle videos a dedicated type.  See
+// tasks.org.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Entry {

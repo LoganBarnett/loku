@@ -1,0 +1,15 @@
+{
+  "autoMemoryEnabled": false,
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-stop.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

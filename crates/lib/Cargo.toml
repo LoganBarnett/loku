@@ -5,12 +5,22 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = []
 
 [dependencies]
+# Re-exports foundation's logging types and prelude so the server crate can
+# depend on loku-lib for shared types.
+rust-template-foundation = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
-tap = { workspace = true }  # For method chaining, reduces superfluous locals
+# Enables method chaining and reduces superfluous local variables that only
+# exist to name intermediate results.  Prefer .tap() over temporary variables
+# when it improves readability.
+tap = { workspace = true }
 
 [dev-dependencies]
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
+
+[lints]
+workspace = true

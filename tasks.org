@@ -10,16 +10,16 @@ Bring ripped DVD/Blu-ray dumps up to the same first-class status Loku already
 gives yt-dlp libraries: friendly titles and rich metadata instead of a flat
 bucket of mangled filenames.
 
-Governing principle: Loku owns the media lifecycle end to end — input
-(ripping), library (organization and metadata), format (keeping serviceable
+Governing principle: Loku owns the media lifecycle end to end — input (ripping),
+library (organization and metadata), format (keeping serviceable
 representations), and its own playback.  This is a deliberate consolidation, not
 a set of Unix-style single-purpose tools wired together with systemd.  The merit
 is the guarantee: rip, format, and metadata are one bound concern — consistency
 has to hold from the moment a disc is ripped through to the moment it plays — so
 one system that controls all of them can promise every library item is
-serviceable end to end, which wired-together stages can only hope for.  The spine
-of that guarantee is a Kodi-compatible =.nfo= sidecar per video, generated from
-an authoritative TMDB identity, so the metadata is written once and read by
+serviceable end to end, which wired-together stages can only hope for.  The
+spine of that guarantee is a Kodi-compatible =.nfo= sidecar per video, generated
+from an authoritative TMDB identity, so the metadata is written once and read by
 everything.
 
 Design rationale is kept inline throughout so it is not re-derived later.
@@ -91,9 +91,9 @@ how TheDiscDB catalogs discs.
 
 This is the key fix.  =makemkvcon -r info= emits the structured =TINFO=/=CINFO=
 disc analysis — the exact data TheDiscDB stores and the matching key we need.
-The current NixOS module *generates* it but writes it to a temp dir that is
-=rm -rf='d on success (surfaced to the journal only on *failure*), so it is
-thrown away for every rip that worked.
+The current NixOS module *generates* it but writes it to a temp dir that is =rm
+-rf='d on success (surfaced to the journal only on *failure*), so it is thrown
+away for every rip that worked.
 
 Capture it at scan time and store it next to the MKVs.  It costs nothing at rip
 time; reconstructing it afterward is lossy or requires re-scanning the disc.
@@ -152,9 +152,9 @@ rather than the format-specific on-disc structures.
 
 *** TODO Match against a local TheDiscDB mirror
 
-TheDiscDB stores raw =makemkvcon= logs plus a summary mapping and =release.json=;
-it is a dataset (mirror the files locally), not a live query API, and it does no
-matching itself — that is ours to build.
+TheDiscDB stores raw =makemkvcon= logs plus a summary mapping and
+=release.json=; it is a dataset (mirror the files locally), not a live query
+API, and it does no matching itself — that is ours to build.
 
 - Match on the *multiset* of (duration, chapter count) across the substantial
   titles.  Treat size as a weaker/fuzzy signal.
@@ -195,8 +195,8 @@ it does not resolve to metadata by itself.
 A one-table SQLite cache, seeded from TheDiscDB where it has coverage.  Hit →
 instant.  Miss → run the resolver chain, then write the result back so the next
 encounter of that exact pressing is free.  A fingerprint identifies "this exact
-disc," so a *different* pressing of a known title is a fresh miss (then cached) —
-inherent to disc-identity keys and acceptable.
+disc," so a *different* pressing of a known title is a fresh miss (then cached)
+— inherent to disc-identity keys and acceptable.
 
 *** TODO TMDB client and NFO/artwork writer
 
@@ -232,6 +232,57 @@ requiring a full re-rip:
 ** NEXT Interim: stop discarding =disc-info.txt= in =makemkv-ripper.nix=
 
 In ~/dev/nix-config, until Loku owns ripping, change the NixOS module to persist
-the =makemkvcon -r info= output alongside the MKV output instead of writing it to
-a temp dir that is deleted on success.  Cheap change; prevents the go-forward
+the =makemkvcon -r info= output alongside the MKV output instead of writing it
+to a temp dir that is deleted on success.  Cheap change; prevents the go-forward
 rips from repeating the backlog problem.
+
+** TODO Fold library-directory validation into MergeConfig once it supports a validate hook
+
+Loku's server config requires the media library directory to exist.  Because
+=MergeConfig= (in rust-template's =foundation-derive=) has no per-field
+validation hook, that existence check rides the =#[merge_config(skip)]= +
+=resolve_library_path= escape hatch, which also re-implements the CLI-or-file
+precedence by hand.  When rust-template adds a per-field =validate= /
+=parse_with= attribute that runs on the merged value — tracked in
+rust-template's =tasks.org= — collapse the skip+resolve into a single validated
+=library_path= field.
+
+* TODO Split the browse Entry enum into separate video and directory types
+
+=browse.rs='s =Entry= enum unions =Directory= (small) and =Video= (many metadata
+fields), so its size is dominated by the video case and clippy's
+=large_enum_variant= fires (allowed at the definition, not denied).  The size is
+the lesser issue: callers that only ever deal with videos — a player view, a
+"just show me the video" path — have to match past a directory case they never
+want.  Factoring =Video= into its own struct that =Entry= holds would both
+shrink the enum and give those callers a dedicated video type to work with
+directly.
+
+* TODO Reconcile ERROR_HANDLING.org with the template's error-handling docs
+
+=ERROR_HANDLING.org= at the repo root is an inherited artifact, not loku's: it
+is titled and attributed to the "DNS Smart Block Project" and its examples
+reference =blocklist-server=, a =domains= SQL table, and DNS blocklists — none
+of which loku has.  The compliance sync also brought in the template's
+=CONTRIBUTING.org= "Error handling" section, so the guidance now lives in two
+places, one of them stale and misattributed.
+
+It should match the template's shape, where error-handling guidance is a
+/section of CONTRIBUTING.org/, not a standalone file.  All-caps root files
+(=README=, =CONTRIBUTING=, =CHANGELOG=, =LICENSE=) are the deliberately small
+set that lexicographic sorting floats to the top of the listing; a topic like
+error handling does not warrant its own all-caps slot.
+
+Plan:
+
+1. Harvest the still-generic material =CONTRIBUTING.org='s section lacks —
+   secret/URL sanitization ("never log passwords/connection strings"),
+   error-message testing, and the pre-commit checklist — and fold it into the
+   existing "Error handling" section (dropping the =blocklist-server= / database
+   / DNS examples that do not apply).
+2. Delete the standalone =ERROR_HANDLING.org=.
+3. Cross-repo option: promote that harvested generic material /up/ into
+   rust-template's =CONTRIBUTING.org= "Error handling" section so every spawn
+   gets it.  If it grows too large for a section, a lowercase
+   =docs/error-handling.org= linked from =CONTRIBUTING.org= / =llms.org= is
+   acceptable — but never a new all-caps standalone.

@@ -1,18 +1,18 @@
-# NixOS module for the loku-web service.
-# Exported from the flake as nixosModules.web.
+# NixOS module for the loku-server service.
+# Exported from the flake as nixosModules.server.
 #
 # Minimal usage (defaults to Unix domain socket activation):
 #
-#   inputs.loku.nixosModules.web
+#   inputs.loku.nixosModules.server
 #
-#   services.loku-web = {
+#   services.loku-server = {
 #     enable = true;
 #     libraryPath = "/media/videos";
 #   };
 #
 # To use TCP instead:
 #
-#   services.loku-web = {
+#   services.loku-server = {
 #     enable = true;
 #     socket = null;
 #     port = 8080;
@@ -22,29 +22,31 @@
 # To reference the socket from a reverse proxy (e.g. nginx):
 #
 #   locations."/".proxyPass =
-#     "http://unix:${config.services.loku-web.socket}";
+#     "http://unix:${config.services.loku-server.socket}";
 #
-# Note: when using socket mode the reverse proxy user must be a member of
-# the service group (cfg.group) so it can connect to the socket.
-{ self }:
-{ config, lib, pkgs, ... }:
-let
-  cfg = config.services.loku-web;
-in
-{
-  options.services.loku-web = {
-    enable = lib.mkEnableOption "loku-web web service";
+# Note: when using socket mode the reverse proxy user must be a member of the
+# service group (cfg.group) so it can connect to the socket.
+{self}: {
+  config,
+  lib,
+  pkgs,
+  ...
+}: let
+  cfg = config.services.loku-server;
+in {
+  options.services.loku-server = {
+    enable = lib.mkEnableOption "loku-server video service";
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = self.packages.${pkgs.stdenv.hostPlatform.system}.web;
-      defaultText = lib.literalExpression "self.packages.\${system}.web";
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.server;
+      defaultText = lib.literalExpression "self.packages.\${system}.server";
       description = "Package providing the service binary.";
     };
 
     socket = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
-      default = "/run/loku-web/loku-web.sock";
+      default = "/run/loku-server/loku-server.sock";
       description = ''
         Path for the Unix domain socket used by the service.  When set,
         systemd socket activation is used and the host/port options are
@@ -68,13 +70,13 @@ in
     };
 
     logLevel = lib.mkOption {
-      type = lib.types.enum [ "trace" "debug" "info" "warn" "error" ];
+      type = lib.types.enum ["trace" "debug" "info" "warn" "error"];
       default = "info";
       description = "Tracing log verbosity level.";
     };
 
     logFormat = lib.mkOption {
-      type = lib.types.enum [ "text" "json" ];
+      type = lib.types.enum ["text" "json"];
       default = "json";
       description = ''
         Log output format.  Use "text" for human-readable local logs and
@@ -90,13 +92,13 @@ in
 
     user = lib.mkOption {
       type = lib.types.str;
-      default = "loku-web";
+      default = "loku-server";
       description = "System user account the service runs as.";
     };
 
     group = lib.mkOption {
       type = lib.types.str;
-      default = "loku-web";
+      default = "loku-server";
       description = "System group the service runs as.";
     };
   };
@@ -105,10 +107,10 @@ in
     users.users.${cfg.user} = {
       isSystemUser = true;
       group = cfg.group;
-      description = "loku-web service user";
+      description = "loku-server service user";
     };
 
-    users.groups.${cfg.group} = { };
+    users.groups.${cfg.group} = {};
 
     # Create the socket directory before the socket unit tries to bind.
     systemd.tmpfiles.rules = lib.mkIf (cfg.socket != null) [
@@ -117,9 +119,9 @@ in
 
     # Socket unit: systemd creates and holds the Unix domain socket, then
     # passes the open file descriptor to the service on first activation.
-    systemd.sockets.loku-web = lib.mkIf (cfg.socket != null) {
-      description = "loku-web Unix domain socket";
-      wantedBy = [ "sockets.target" ];
+    systemd.sockets.loku-server = lib.mkIf (cfg.socket != null) {
+      description = "loku-server Unix domain socket";
+      wantedBy = ["sockets.target"];
       socketConfig = {
         ListenStream = cfg.socket;
         SocketUser = cfg.user;
@@ -131,39 +133,39 @@ in
       };
     };
 
-    systemd.services.loku-web = {
-      description = "loku-web web service";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ]
-        ++ lib.optional (cfg.socket != null) "loku-web.socket";
+    systemd.services.loku-server = {
+      description = "loku-server video service";
+      wantedBy = ["multi-user.target"];
+      after =
+        ["network.target"]
+        ++ lib.optional (cfg.socket != null) "loku-server.socket";
       requires =
-        lib.optional (cfg.socket != null) "loku-web.socket";
-
-      environment = {
-        LOG_LEVEL = cfg.logLevel;
-        LOG_FORMAT = cfg.logFormat;
-      };
+        lib.optional (cfg.socket != null) "loku-server.socket";
 
       serviceConfig = {
         # Type = notify causes systemd to wait for the binary to call
-        # sd_notify(READY=1) before marking the unit active.  The binary
-        # does this via the sd-notify crate immediately after the listener
-        # is bound.  NotifyAccess = main restricts who may send
-        # notifications to the main process only.
+        # sd_notify(READY=1) before marking the unit active.  Foundation's
+        # server runner does this immediately after the listener is bound.
+        # NotifyAccess = main restricts who may send notifications to the main
+        # process only.
         Type = "notify";
         NotifyAccess = "main";
 
-        # Restart if no WATCHDOG=1 heartbeat arrives within 30 s.  The
-        # binary reads WATCHDOG_USEC and pings at half this interval (15 s).
-        # Override via systemd.services.loku-web.serviceConfig.WatchdogSec.
+        # Restart if no WATCHDOG=1 heartbeat arrives within 30 s.  The binary
+        # reads WATCHDOG_USEC and pings at half this interval (15 s).  Override
+        # via systemd.services.loku-server.serviceConfig.WatchdogSec.
         WatchdogSec = lib.mkDefault "30s";
 
-        ExecStart = "${cfg.package}/bin/loku-web"
-          + (if cfg.socket != null
-             then " --listen sd-listen"
-             else " --listen ${cfg.host}:${toString cfg.port}")
-          + " --library-path ${cfg.libraryPath}"
-          + " --frontend-path ${cfg.package}/share/loku-web/frontend";
+        ExecStart =
+          "${cfg.package}/bin/loku-server"
+          + (
+            if cfg.socket != null
+            then " --listen sd-listen"
+            else " --listen ${cfg.host}:${toString cfg.port}"
+          )
+          + " --library ${cfg.libraryPath}"
+          + " --log-level ${cfg.logLevel}"
+          + " --log-format ${cfg.logFormat}";
 
         User = cfg.user;
         Group = cfg.group;
@@ -179,7 +181,7 @@ in
         # Grant read access to the video library.  ProtectSystem = "strict"
         # makes the whole filesystem read-only by default, so the library
         # directory must be explicitly allowed.
-        BindReadOnlyPaths = [ cfg.libraryPath ];
+        BindReadOnlyPaths = [cfg.libraryPath];
       };
     };
   };

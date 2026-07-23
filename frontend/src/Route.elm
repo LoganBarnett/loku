@@ -1,4 +1,4 @@
-module Route exposing (Route(..), BrowseParams, parse, toString)
+module Route exposing (BrowseParams, Route(..), parse, toString)
 
 import Url exposing (Url)
 
@@ -94,7 +94,8 @@ percentDecode s =
     Url.percentDecode s |> Maybe.withDefault s
 
 
-{-| Encode each path segment individually, preserving slash separators. -}
+{-| Encode each path segment individually, preserving slash separators.
+-}
 encodePath : String -> String
 encodePath path =
     path

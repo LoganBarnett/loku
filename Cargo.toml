@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/lib",
-    "crates/web",
+    "crates/server",
 ]
 
 [workspace.package]
@@ -13,45 +13,128 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/LoganBarnett/loku"
 
 [workspace.dependencies]
-# Logging and tracing
+# Foundation infrastructure crate (config, logging, health, metrics, auth,
+# systemd, graceful shutdown, and the Server runner).
+rust-template-foundation = { git = "https://github.com/LoganBarnett/rust-template.git", version = ">=0.16" }
+
+# Structured logging.  The subscriber, journald, and systemd plumbing now live
+# in foundation; loku code only emits events via the tracing macros.
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
-tracing-journald = "0.3"
 
-# Systemd integration
-sd-notify = "0.4"
-
-# Utilities
-# tap - Enables method chaining and reduces superfluous local variables
-# that only exist to name intermediate results. Prefer .tap() over temporary
+# tap - Enables method chaining and reduces superfluous local variables that
+# only exist to name intermediate results.  Prefer .tap() over temporary
 # variables when it improves readability.
 tap = "1.0"
 
-# CLI parsing
+# CLI parsing.  MergeConfig generates a clap Parser for CliRaw, and the OIDC /
+# library extra-fields structs derive clap::Args.
 clap = { version = "4.5", features = ["derive", "env"] }
 
-# Configuration
+# Configuration models: serde derives the config-file and browse payload types;
+# serde_json parses yt-dlp info.json sidecars.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
 
-# Error handling
+# Semantic error types for the browse handler.
 thiserror = "2.0"
 
-# Web framework
+# Web framework.  axum types back the browse handler and the FromRef impls the
+# impl_server_state! macro expands to; tokio is the async runtime; the browse
+# routes and static media are served through tokio-listener/tower-http.
 axum = "0.8"
 tokio = { version = "1.41", features = ["full"] }
 tokio-listener = { version = "0.5", features = ["axum08"] }
+# tower's ServiceExt::oneshot drives the router in integration tests.
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors", "fs", "set-header"] }
+# tower-http's ServeDir serves media files from the library root under /files.
+tower-http = { version = "0.6", features = ["fs"] }
 
-# OpenMetrics/Prometheus
+# Frontend embedding — bakes the compiled Elm bundle into the server binary so a
+# downloaded release is self-contained.  mime-guess drives the Content-Type the
+# SPA service returns; interpolate-folder-path lets the #[folder] attribute
+# expand $RUST_TEMPLATE_FRONTEND_DIR (set by the server crate's build.rs).
+rust-embed = { version = "8", features = ["mime-guess", "interpolate-folder-path"] }
+
+# Prometheus metrics.  Foundation owns the /metrics endpoint, but the
+# impl_server_state! macro expands to reference ::prometheus in this workspace.
 prometheus = "0.13"
 
-
-# OpenAPI
+# OpenAPI: aide builds the documented ApiRouter for the browse route; schemars
+# derives the request/response schemas.
 aide = { version = "0.15", features = ["axum", "axum-json", "axum-query", "scalar", "macros"] }
 schemars = "0.9"
 
-# Shared library
+# OIDC types.  Foundation performs discovery, but OidcConfig is threaded through
+# the server config and the impl_server_state! macro references
+# ::openidconnect::core::CoreClient.
+openidconnect = { version = "3", features = ["reqwest"] }
+
+# Temp directories for integration tests (library and config fixtures).
+tempfile = "3"
+
+# Shared library.
 loku-lib = { path = "crates/lib" }
+
+# ============================================================================
+# BUILD PROFILES
+# ============================================================================
+# Without these settings, target/debug can easily reach tens of GB.
+# Dependencies are the primary culprit.  See
+# https://doc.rust-lang.org/cargo/reference/profiles.html
+
+[profile.dev]
+# No debug symbols — the single largest contributor to target/ bloat.
+debug = false
+# Disable incremental compilation; its many small files accumulate quickly and
+# the compile-time benefit rarely outweighs the disk cost here.
+incremental = false
+
+[profile.dev.package."*"]
+# Optimize dependencies even in dev builds so tokio/axum run at near-release
+# speed during development, with minimal extra cost on incremental rebuilds.
+opt-level = 3
+
+[profile.release]
+debug = false
+# Shipped as release artifacts, so optimize for the end user: lto and a single
+# codegen unit let the optimizer work across crate boundaries, and strip shrinks
+# the download.  opt-level stays at the default 3.
+lto = true
+codegen-units = 1
+strip = true
+
+# ============================================================================
+# LINTS
+# ============================================================================
+# Project-wide ban on the panicking variants of Result/Option, enforced via
+# clippy.  Test code is exempted by clippy.toml's allow-*-in-tests keys, which
+# cover both #[cfg(test)] modules in src/ and integration tests under tests/.
+# Member crates opt in by setting [lints] workspace = true.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+# ----------------------------------------------------------------------------
+# Combinator preference: nudge toward the least powerful construct that fits.
+# See llms.org "Rule of least power".  Configured at "warn" rather than "deny"
+# because some imperative forms are genuinely clearer; override site-locally
+# with #[allow(...)] and a one-line reason.
+manual_map = "warn"
+manual_filter = "warn"
+manual_filter_map = "warn"
+manual_find = "warn"
+manual_find_map = "warn"
+manual_flatten = "warn"
+manual_let_else = "warn"
+manual_ok_or = "warn"
+manual_unwrap_or = "warn"
+manual_unwrap_or_default = "warn"
+option_if_let_else = "warn"
+map_unwrap_or = "warn"
+needless_collect = "warn"
+unnecessary_fold = "warn"
+question_mark = "warn"
+single_match_else = "warn"
+collapsible_match = "warn"
+redundant_pattern_matching = "warn"

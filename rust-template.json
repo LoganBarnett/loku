@@ -1,0 +1,9 @@
+{
+  "template_sync_hashes": ["bd670248e619bb5ae401d095fd25d82131055c97"],
+  "windows-msvc": false,
+  "apple-frameworks": true,
+  "workspaces": {
+    "server": { "release-binary": true },
+    "lib": { "release-binary": false }
+  }
+}

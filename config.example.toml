@@ -1,15 +1,26 @@
-# Example configuration file for loku applications
-# Copy this file to config.toml and customize as needed
+# Example configuration file for loku
+# Copy this file to config.toml and customize as needed.
+#
+# Env-var names follow loku_<flag> in lowercase (e.g. loku_library, loku_listen).
 
 # Logging configuration
 log_level = "info"  # Options: trace, debug, info, warn, error
 log_format = "text"  # Options: text, json
 
-# CLI-specific options
-# name = "World"
-
-# Web-specific options
+# Address to listen on
 # listen = "127.0.0.1:3000"       # TCP: host:port
 # listen = "/run/loku/loku.sock"  # Unix domain socket path
 # listen = "sd-listen"            # Inherit socket from systemd (socket activation)
-# library_path = "/media/videos"
+
+# Root directory of the video library (required; or pass --library).
+# library = "/media/videos"
+
+# Base URL of the service.  Only needed for OIDC deployments; defaults to a
+# local address otherwise.
+# base_url = "https://loku.example.com"
+
+# OIDC authentication (optional).  Set all three to require login; the secret
+# file may also be supplied via systemd LoadCredential.
+# oidc_issuer = "https://sso.example.com/application/o/loku"
+# oidc_client_id = "loku"
+# oidc_client_secret_file = "/run/credentials/loku.service/oidc-secret"

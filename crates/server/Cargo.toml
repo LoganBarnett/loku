@@ -1,0 +1,52 @@
+[package]
+name = "loku-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = []
+
+[lib]
+name = "loku_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "loku-server"
+path = "src/main.rs"
+
+[dependencies]
+rust-template-foundation = { workspace = true, features = ["auth"] }
+loku-lib = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Required by the MergeConfig derive: it generates a ConfigError that derives
+# thiserror's Error, and the browse handler defines its own BrowseError.
+thiserror = { workspace = true }
+# Enables method chaining and reduces superfluous local variables that only
+# exist to name intermediate results.  Prefer .tap() over temporary variables
+# when it improves readability.
+tap = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-listener = { workspace = true }
+# ServeDir serves media files from the library root under /files.
+tower-http = { workspace = true }
+prometheus = { workspace = true }
+aide = { workspace = true }
+schemars = { workspace = true }
+openidconnect = { workspace = true }
+# Embeds the compiled Elm bundle into the binary.  build.rs resolves the asset
+# directory (defaulting to the in-tree frontend/public) and exports it as
+# RUST_TEMPLATE_FRONTEND_DIR for the Frontend derive.
+rust-embed = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# Drives the router with ServiceExt::oneshot in integration tests.
+tower = { workspace = true }
+
+[lints]
+workspace = true
