@@ -26,3 +26,6 @@
    (={"status":…,"components":{"library":{…}}}=) instead of a flat
    ={"status":"healthy"}=; the HTTP status codes are unchanged.  Adjust any
    external probe that parses the response body.
+** Maintenance
+1. build(deps): Bump serde_json from 1.0.149 to 1.0.151
+   (https://github.com/LoganBarnett/loku/pull/2)
