@@ -5,6 +5,7 @@
 ** Added
 ** Fixes
 ** Breaking
+* v0.3.0
 * v0.2.0
 ** Added
 1. Loku now builds on the rust-template =foundation= crate, adopting its shared
