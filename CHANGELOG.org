@@ -3,13 +3,16 @@
 
 * Upcoming
 ** Added
+** Fixes
+** Breaking
+* v0.2.0
+** Added
 1. Loku now builds on the rust-template =foundation= crate, adopting its shared
    server runtime — health checks, Prometheus metrics, OpenAPI/Scalar docs, OIDC
    authentication, systemd socket activation and watchdog, and graceful shutdown
    — along with the standard CI, release-binaries, dependabot, and
    branch-protection automation.  No action is required for existing local use;
    the =/api/browse= video-listing behaviour is unchanged.
-** Fixes
 ** Breaking
 1. The server crate moved from =crates/web= to =crates/server= and its binary is
    now =loku-server= (was =loku-web=).  Update any systemd unit, NixOS module
