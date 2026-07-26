@@ -57,7 +57,7 @@ rust-embed = { version = "8", features = ["mime-guess", "interpolate-folder-path
 
 # Prometheus metrics.  Foundation owns the /metrics endpoint, but the
 # impl_server_state! macro expands to reference ::prometheus in this workspace.
-prometheus = "0.13"
+prometheus = "0.14"
 
 # OpenAPI: aide builds the documented ApiRouter for the browse route; schemars
 # derives the request/response schemas.
