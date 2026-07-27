@@ -38,6 +38,7 @@ type alias VideoEntry =
     , durationSecs : Maybe Float
     , uploadDate : Maybe String
     , compatPath : Maybe String
+    , nativeType : Maybe String
     , description : Maybe String
     , channel : Maybe String
     , channelUrl : Maybe String
@@ -103,6 +104,7 @@ entryDecoder =
                                 , durationSecs = durationSecs
                                 , uploadDate = uploadDate
                                 , compatPath = compatPath
+                                , nativeType = Nothing
                                 , description = description
                                 , channel = Nothing
                                 , channelUrl = Nothing
@@ -120,20 +122,22 @@ entryDecoder =
                             (D.maybe (D.field "description" D.string))
                             |> D.andThen
                                 (\partial ->
-                                    D.map4
-                                        (\channel channelUrl webpageUrl viewCount ->
+                                    D.map5
+                                        (\channel channelUrl webpageUrl viewCount nativeType ->
                                             Video
                                                 { partial
                                                     | channel = channel
                                                     , channelUrl = channelUrl
                                                     , webpageUrl = webpageUrl
                                                     , viewCount = viewCount
+                                                    , nativeType = nativeType
                                                 }
                                         )
                                         (D.maybe (D.field "channel" D.string))
                                         (D.maybe (D.field "channel_url" D.string))
                                         (D.maybe (D.field "webpage_url" D.string))
                                         (D.maybe (D.field "view_count" D.int))
+                                        (D.maybe (D.field "native_type" D.string))
                                 )
 
                     _ ->

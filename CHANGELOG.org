@@ -3,7 +3,11 @@
 
 * Upcoming
 ** Added
+1. Capable browsers now play the original file at full quality while others fall
+   back to the compatible copy.  No action needed.
 ** Fixes
+1. Videos now play reliably in Safari on macOS and iOS, with no wasted download
+   of an incompatible file first.  No action needed.
 ** Breaking
 ** Maintenance
 * v0.4.0

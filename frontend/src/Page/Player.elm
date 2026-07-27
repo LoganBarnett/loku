@@ -10,7 +10,7 @@ import Route
 
 
 type Model
-    = Loading Bool String
+    = Loading String
     | Loaded PlayerState
     | Failed String
 
@@ -21,6 +21,7 @@ type alias PlayerState =
     , uploadDate : Maybe String
     , durationSecs : Maybe Float
     , compatPath : Maybe String
+    , nativeType : Maybe String
     , description : Maybe String
     , channel : Maybe String
     , channelUrl : Maybe String
@@ -28,7 +29,6 @@ type alias PlayerState =
     , viewCount : Maybe Int
     , bufferFraction : Float
     , mediaError : Maybe MediaErrorCode
-    , canWebm : Bool
     }
 
 
@@ -49,9 +49,9 @@ type Msg
     | MediaError MediaErrorCode
 
 
-init : Bool -> String -> ( Model, Cmd Msg )
-init canWebm path =
-    ( Loading canWebm path
+init : String -> ( Model, Cmd Msg )
+init path =
+    ( Loading path
     , Api.getBrowse (parentPath path) GotListing
     )
 
@@ -60,23 +60,12 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         GotListing (Ok listing) ->
-            let
-                path =
-                    loadingPath model
-
-                canWebm =
-                    loadingCanWebm model
-            in
-            ( Loaded (findVideo canWebm path listing.entries)
+            ( Loaded (findVideo (loadingPath model) listing.entries)
             , Cmd.none
             )
 
         GotListing (Err _) ->
-            ( Loaded
-                (fallbackState
-                    (loadingCanWebm model)
-                    (loadingPath model)
-                )
+            ( Loaded (fallbackState (loadingPath model))
             , Cmd.none
             )
 
@@ -109,16 +98,16 @@ update msg model =
 and convert it to a PlayerState. Falls back to a minimal state when
 the video is not found in the listing.
 -}
-findVideo : Bool -> String -> List Api.Entry -> PlayerState
-findVideo canWebm path entries =
+findVideo : String -> List Api.Entry -> PlayerState
+findVideo path entries =
     entries
-        |> List.filterMap (matchVideo canWebm path)
+        |> List.filterMap (matchVideo path)
         |> List.head
-        |> Maybe.withDefault (fallbackState canWebm path)
+        |> Maybe.withDefault (fallbackState path)
 
 
-matchVideo : Bool -> String -> Api.Entry -> Maybe PlayerState
-matchVideo canWebm path entry =
+matchVideo : String -> Api.Entry -> Maybe PlayerState
+matchVideo path entry =
     case entry of
         Video v ->
             if v.path == path then
@@ -128,6 +117,7 @@ matchVideo canWebm path entry =
                     , uploadDate = v.uploadDate
                     , durationSecs = v.durationSecs
                     , compatPath = v.compatPath
+                    , nativeType = v.nativeType
                     , description = v.description
                     , channel = v.channel
                     , channelUrl = v.channelUrl
@@ -135,7 +125,6 @@ matchVideo canWebm path entry =
                     , viewCount = v.viewCount
                     , bufferFraction = 0
                     , mediaError = Nothing
-                    , canWebm = canWebm
                     }
 
             else
@@ -145,13 +134,14 @@ matchVideo canWebm path entry =
             Nothing
 
 
-fallbackState : Bool -> String -> PlayerState
-fallbackState canWebm path =
+fallbackState : String -> PlayerState
+fallbackState path =
     { path = path
     , title = path
     , uploadDate = Nothing
     , durationSecs = Nothing
     , compatPath = Nothing
+    , nativeType = Nothing
     , description = Nothing
     , channel = Nothing
     , channelUrl = Nothing
@@ -159,7 +149,6 @@ fallbackState canWebm path =
     , viewCount = Nothing
     , bufferFraction = 0
     , mediaError = Nothing
-    , canWebm = canWebm
     }
 
 
@@ -170,7 +159,7 @@ fallbackState canWebm path =
 view : Model -> Html Msg
 view model =
     case model of
-        Loading _ _ ->
+        Loading _ ->
             p [ style "padding" "1rem" ] [ text "Loading…" ]
 
         Failed err ->
@@ -248,83 +237,60 @@ videoAttrs =
 
 
 {-| Build the extra attributes and child source elements for the video
-tag. Single-source videos attach the error decoder directly; dual-source
-videos use source elements whose type\_ hints and ordering let the
-browser pick the best format.
+tag from the two facts the server derives: `nativeType` (the codecs-qualified
+`<source type>` for the native file, or Nothing when it must not be offered)
+and `compatPath` (a universally-playable H.264/AAC MP4, when one exists).
+
+The native source, when offered, carries a full RFC 6381 codecs string so the
+browser's canPlayType decides authoritatively — an incapable browser (e.g.
+Safari facing AV1/VP9) skips it without downloading a byte and drops to the
+compat, while a capable browser plays the higher-quality native. The compat is
+the terminal fallback with a bare `video/mp4` type, which every browser
+accepts.
+
 -}
 videoSources :
     PlayerState
     -> ( List (Attribute Msg), List (Html Msg) )
 videoSources state =
-    case state.compatPath of
-        Nothing ->
-            -- Single source: attach error decoder directly to the video
-            -- element where target.error.code is available.
-            ( [ src (Api.videoUrl state.path)
-              , on "error" (D.map MediaError mediaErrorDecoder)
-              ]
-            , []
-            )
-
-        Just cp ->
-            dualSources state.canWebm state.path cp
-
-
-{-| Build two source elements for a video with a compat MP4 copy.
-Error fires on the last source only if both fail; source elements have
-no .error.code so we use a fixed code.
--}
-dualSources :
-    Bool
-    -> String
-    -> String
-    -> ( List (Attribute Msg), List (Html Msg) )
-dualSources canWebm path compatPath =
     let
-        errorAttr =
+        nativeUrl =
+            Api.videoUrl state.path
+
+        -- Source elements do not expose target.error.code, so a source-level
+        -- failure reports the fixed "not supported" code.
+        fixedError =
             on "error" (D.succeed (MediaError ErrSrcNotSupported))
+
+        -- The video element does expose target.error.code, so a src-level
+        -- failure reports the specific decode/network/format cause.
+        codedError =
+            on "error" (D.map MediaError mediaErrorDecoder)
     in
-    case mimeTypeFromPath path of
-        Just mime ->
-            -- Web-standard format: type_ hints let the browser skip
-            -- instantly; canWebm refines source order for older Safari.
-            let
-                ( first, second ) =
-                    if canWebm then
-                        ( ( Api.videoUrl path, mime )
-                        , ( Api.videoUrl compatPath, "video/mp4" )
-                        )
-
-                    else
-                        ( ( Api.videoUrl compatPath, "video/mp4" )
-                        , ( Api.videoUrl path, mime )
-                        )
-            in
+    case ( state.nativeType, state.compatPath ) of
+        ( Just nt, Just cp ) ->
             ( []
-            , [ source [ src (Tuple.first first), type_ (Tuple.second first) ] []
-              , source
-                    [ src (Tuple.first second)
-                    , type_ (Tuple.second second)
-                    , errorAttr
-                    ]
-                    []
+            , [ source [ src nativeUrl, type_ nt ] []
+              , source [ src (Api.videoUrl cp), type_ "video/mp4", fixedError ] []
               ]
             )
 
-        Nothing ->
-            -- Non-standard container (MKV, AVI, MOV): omit type_ so
-            -- capable browsers play it directly; others probe the
-            -- header bytes and quickly skip to the compat MP4.
+        ( Just nt, Nothing ) ->
+            -- Only the native, but its codecs type still lets an incapable
+            -- browser fail fast instead of downloading it.
             ( []
-            , [ source [ src (Api.videoUrl path) ] []
-              , source
-                    [ src (Api.videoUrl compatPath)
-                    , type_ "video/mp4"
-                    , errorAttr
-                    ]
-                    []
-              ]
+            , [ source [ src nativeUrl, type_ nt, fixedError ] [] ]
             )
+
+        ( Nothing, Just cp ) ->
+            -- Native cannot be offered safely (non-standard container or
+            -- unknown codecs); serve only the guaranteed-playable compat.
+            ( [ src (Api.videoUrl cp), codedError ], [] )
+
+        ( Nothing, Nothing ) ->
+            -- Best effort with no hint: let the browser probe the native and
+            -- surface the specific error if it cannot play it.
+            ( [ src nativeUrl, codedError ], [] )
 
 
 bufferBar : Float -> Html msg
@@ -422,47 +388,11 @@ parentPath path =
 loadingPath : Model -> String
 loadingPath model =
     case model of
-        Loading _ p ->
+        Loading p ->
             p
 
         _ ->
             ""
-
-
-loadingCanWebm : Model -> Bool
-loadingCanWebm model =
-    case model of
-        Loading cw _ ->
-            cw
-
-        _ ->
-            True
-
-
-{-| Map a file path's extension to a web-standard MIME type. Returns
-Nothing for non-standard containers (MKV, AVI, MOV) so the caller can
-omit the type\_ attribute and let the browser probe the header bytes.
--}
-mimeTypeFromPath : String -> Maybe String
-mimeTypeFromPath path =
-    let
-        ext =
-            path
-                |> String.split "."
-                |> List.reverse
-                |> List.head
-                |> Maybe.map String.toLower
-                |> Maybe.withDefault ""
-    in
-    case ext of
-        "webm" ->
-            Just "video/webm"
-
-        "mp4" ->
-            Just "video/mp4"
-
-        _ ->
-            Nothing
 
 
 {-| Strip trailing punctuation characters that are unlikely to be part of a
