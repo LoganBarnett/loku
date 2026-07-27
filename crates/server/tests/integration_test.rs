@@ -605,6 +605,111 @@ async fn test_files_returns_404_for_nonexistent_file() {
 }
 
 #[tokio::test]
+async fn test_files_advertises_byte_ranges() {
+  // Safari (desktop and iOS) refuses to play a video whose server does not
+  // advertise range support, so a full GET must carry Accept-Ranges: bytes.
+  let dir = tempfile::tempdir().unwrap();
+  fs::write(dir.path().join("clip.mp4"), b"0123456789").unwrap();
+
+  let response = get(test_router(dir.path()).await, "/files/clip.mp4").await;
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(
+    response
+      .headers()
+      .get("accept-ranges")
+      .and_then(|v| v.to_str().ok()),
+    Some("bytes"),
+    "video responses must advertise byte-range support for Safari"
+  );
+}
+
+#[tokio::test]
+async fn test_files_serves_range_request() {
+  // A Range request must yield 206 with a Content-Range and only the requested
+  // bytes; this is the seek/streaming contract Safari relies on.
+  let dir = tempfile::tempdir().unwrap();
+  fs::write(dir.path().join("clip.mp4"), b"0123456789").unwrap();
+
+  let response = test_router(dir.path())
+    .await
+    .oneshot(
+      Request::builder()
+        .uri("/files/clip.mp4")
+        .header("range", "bytes=0-3")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+  assert_eq!(
+    response
+      .headers()
+      .get("content-range")
+      .and_then(|v| v.to_str().ok()),
+    Some("bytes 0-3/10"),
+  );
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  assert_eq!(&body[..], b"0123", "should return only the requested bytes");
+}
+
+#[tokio::test]
+async fn test_browse_native_type_from_codecs() {
+  // The player's <source type> hint is derived server-side from info.json's
+  // vcodec/acodec so canPlayType can reject an undecodable native up front.
+  let dir = tempfile::tempdir().unwrap();
+  fs::write(dir.path().join("clip.mp4"), b"").unwrap();
+  fs::write(
+    dir.path().join("clip.info.json"),
+    r#"{"vcodec":"av01.0.05M.08","acodec":"opus"}"#,
+  )
+  .unwrap();
+
+  let json = get_json(test_router(dir.path()).await, "/api/browse?path=").await;
+  let v = &json["entries"].as_array().unwrap()[0];
+  assert_eq!(v["native_type"], r#"video/mp4; codecs="av01.0.05M.08, opus""#);
+}
+
+#[tokio::test]
+async fn test_browse_native_type_absent_for_non_standard_container() {
+  // An MKV native has no MIME canPlayType accepts, so no native_type is sent
+  // and the player will serve only the compat copy.
+  let dir = tempfile::tempdir().unwrap();
+  fs::write(dir.path().join("clip.mkv"), b"").unwrap();
+  fs::write(
+    dir.path().join("clip.info.json"),
+    r#"{"vcodec":"avc1.640028","acodec":"mp4a.40.2"}"#,
+  )
+  .unwrap();
+
+  let json = get_json(test_router(dir.path()).await, "/api/browse?path=").await;
+  let v = &json["entries"].as_array().unwrap()[0];
+  assert!(
+    v.get("native_type").is_none(),
+    "native_type must be omitted for non-standard containers, got {:?}",
+    v.get("native_type"),
+  );
+}
+
+#[tokio::test]
+async fn test_browse_native_type_absent_without_info_json() {
+  // With no info.json the codecs are unknown, so the native is not offered as
+  // a typed source.
+  let dir = tempfile::tempdir().unwrap();
+  fs::write(dir.path().join("clip.mp4"), b"").unwrap();
+
+  let json = get_json(test_router(dir.path()).await, "/api/browse?path=").await;
+  let v = &json["entries"].as_array().unwrap()[0];
+  assert!(
+    v.get("native_type").is_none(),
+    "native_type must be omitted when codecs are unknown"
+  );
+}
+
+#[tokio::test]
 async fn test_files_serves_files_from_nested_directories() {
   let dir = tempfile::tempdir().unwrap();
   fs::create_dir(dir.path().join("sub")).unwrap();

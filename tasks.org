@@ -129,9 +129,35 @@ is authoritative and untouched.
 *** TODO Track per-item playback compatibility
 
 Loku should know, per library item, whether a directly-playable representation
-exists for its browser player (it already derives MIME type and detects WebM
-capability).  Surface incompatible items explicitly rather than failing
-silently, and drive whichever derivation policy the task above settles on.
+exists for its browser player.  Surface incompatible items explicitly rather
+than failing silently, and drive whichever derivation policy the task above
+settles on.
+
+The player-source strategy this builds on is now settled and implemented: the
+browse API derives a =native_type= per video — the exact =<source type>= string
+with an RFC 6381 codecs parameter (e.g. =video/mp4; codecs="av01.0.05M.08,
+opus"=), taken from the =info.json= =vcodec=/=acodec= fields.  That codecs
+parameter is what makes a browser's =canPlayType= authoritative: an incapable
+browser rejects an undecodable native (AV1/VP9/Opus) up front and drops to the
+compat copy without downloading it, while a capable browser plays the native at
+full quality.  A non-standard container (MKV/AVI/MOV) or unknown codec yields no
+=native_type=, so the player serves only the compat copy.  This replaced the
+earlier container-MIME-plus-=canWebm=-ordering heuristic, which could not
+discriminate codecs and so let Safari download an entire incompatible file
+before falling back.
+
+Remaining for this item: expose the compatibility fact in the browse/search UI
+(the "surface incompatible items explicitly" half), and — the real gap, since
+=native_type= only describes what already exists — guarantee a compat copy is
+present, which depends on the derivation policy above and on whatever produces
+=.compat.mp4= today (an external pipeline).  An =info.json=-less item (e.g. a
+ripped disc) has unknown codecs, so it currently degrades to compat-or-bust; an
+=ffprobe= fallback would recover =native_type= for those.
+
+An end-to-end test of the actual browser selection needs a real Safari, which is
+impractical in CI; the server-side contract it rests on (byte-range serving,
+per-codec =native_type= derivation) is covered by headless integration tests
+instead.
 
 ** Resolve identity (disc → TMDB id)
 

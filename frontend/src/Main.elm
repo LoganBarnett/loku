@@ -23,14 +23,12 @@ type Page
 
 
 type alias Flags =
-    { canWebm : Bool
-    }
+    {}
 
 
 type alias Model =
     { key : Nav.Key
     , page : Page
-    , canWebm : Bool
     }
 
 
@@ -54,20 +52,20 @@ main =
 
 
 init : Flags -> Url -> Nav.Key -> ( Model, Cmd Msg )
-init flags url key =
-    routeToPage key flags.canWebm (Route.parse url)
-        |> Tuple.mapFirst (\page -> { key = key, page = page, canWebm = flags.canWebm })
+init _ url key =
+    routeToPage key (Route.parse url)
+        |> Tuple.mapFirst (\page -> { key = key, page = page })
 
 
-routeToPage : Nav.Key -> Bool -> Route -> ( Page, Cmd Msg )
-routeToPage key canWebm route =
+routeToPage : Nav.Key -> Route -> ( Page, Cmd Msg )
+routeToPage key route =
     case route of
         Route.Browse params ->
             Browse.init key params
                 |> Tuple.mapBoth BrowsePage (Cmd.map BrowseMsg)
 
         Route.Player path ->
-            Player.init canWebm path
+            Player.init path
                 |> Tuple.mapBoth PlayerPage (Cmd.map PlayerMsg)
 
         Route.NotFound ->
@@ -107,7 +105,7 @@ update msg model =
                                     (Cmd.map BrowseMsg)
 
                 route ->
-                    routeToPage model.key model.canWebm route
+                    routeToPage model.key route
                         |> Tuple.mapFirst (\page -> { model | page = page })
 
         BrowseMsg subMsg ->
