@@ -10,6 +10,8 @@
 ** Maintenance
 1. build(deps): Bump thiserror from 2.0.18 to 2.0.20
    (https://github.com/LoganBarnett/loku/pull/20)
+2. build(deps): Bump tower-http from 0.6.8 to 0.7.0
+   (https://github.com/LoganBarnett/loku/pull/7)
 * v0.13.0
 ** Maintenance
 1. build(deps): Bump rust-template-foundation from `8e9411f` to `d2d4c1a`
