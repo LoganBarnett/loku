@@ -47,7 +47,7 @@ tokio-listener = { version = "0.5", features = ["axum08"] }
 # tower's ServiceExt::oneshot drives the router in integration tests.
 tower = "0.5"
 # tower-http's ServeDir serves media files from the library root under /files.
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.7", features = ["fs"] }
 
 # Frontend embedding — bakes the compiled Elm bundle into the server binary so a
 # downloaded release is self-contained.  mime-guess drives the Content-Type the
