@@ -6,6 +6,7 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+* v0.15.0
 * v0.14.0
 ** Maintenance
 1. build(deps): Bump thiserror from 2.0.18 to 2.0.20
