@@ -3,8 +3,36 @@
 
 * Upcoming
 ** Added
+1. Loku now serves multiple named libraries, each typed as =downloads= (yt-dlp)
+   or =discs= (MakeMKV rips).  Define them with =[[library]]= entries in the config
+   file or the NixOS module's =libraries= option; single-library setups can keep
+   passing =--library= unchanged.
+2. Disc rips are now first-class library items: friendly titles, thumbnails, and
+   multi-title discs grouped into one entry with a pick-the-main-title flow.  No
+   action needed.
+3. Search now spans every library at once, with ranked results and pagination,
+   from a new home page.  No action needed.
+4. Every video is now guaranteed a browser-playable copy: masters browsers
+   cannot play get a =.compat.mp4= derived beside them automatically, with
+   conversion status shown in the UI.  =ffmpeg= must be on the server's =PATH=
+   (the NixOS module provides it), and other consumers of the same trees (e.g.
+   Kodi) should exclude =*.compat.mp4= from their scans.
+5. New videos, fresh rips, and deletions now show up on their own — no restart
+   or manual rescan.  No action needed.
 ** Fixes
 ** Breaking
+1. Library names are now part of every path: media files serve under
+   =/files/{library}/…=, app pages under =/browse/{library}/…= (old bookmarks
+   land on the home page), and the config file's =library = "/path"= string is
+   replaced by =[[library]]= entries (NixOS module: =libraryPath= becomes
+   =libraries=).  Module deployments update automatically; hand-written configs
+   and anything constructing =/files= URLs must switch.
+2. Library paths must now be writable by the server (derived files are written
+   beside masters), and a small state database lives in the state directory
+   (=--state-dir=; the NixOS module provisions it).  Grant the service user
+   write access to the library trees.
+3. Directories with no videos anywhere beneath them no longer appear in browse
+   listings.  No action needed for typical media trees.
 ** Maintenance
 * v0.7.0
 ** Maintenance

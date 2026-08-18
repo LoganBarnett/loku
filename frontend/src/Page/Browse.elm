@@ -1,12 +1,22 @@
-module Page.Browse exposing (Model, Msg, currentPath, init, update, updateParams, view)
+module Page.Browse exposing
+    ( Model
+    , Msg
+    , currentLocation
+    , init
+    , update
+    , updateParams
+    , view
+    )
 
-import Api exposing (DirListing, Entry(..))
+import Api exposing (DirListing, DiscSetEntry, Entry(..), VideoItem)
 import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
 import Route
+import Set exposing (Set)
+import Ui
 
 
 pageSize : Int
@@ -23,51 +33,55 @@ type Model
 type alias BrowseState =
     { key : Nav.Key
     , listing : DirListing
-    , query : String
     , page : Int
+    , query : String
+    , expanded : Set String
     }
 
 
 type Msg
     = GotListing (Result Http.Error DirListing)
-    | SearchInput String
-    | SearchCommit
+    | QueryInput String
+    | QuerySubmit
     | GoToPage Int
+    | ToggleSet String
+    | PickMain String String
+    | MainPicked (Result Http.Error ())
 
 
 init : Nav.Key -> Route.BrowseParams -> ( Model, Cmd Msg )
 init key params =
-    ( Loading key params, Api.getBrowse params.path GotListing )
+    ( Loading key params
+    , Api.getBrowse params.library params.path GotListing
+    )
 
 
-currentPath : Model -> String
-currentPath model =
+{-| The (library, path) this page is showing, so Main can tell a same-
+directory parameter change from a real navigation.
+-}
+currentLocation : Model -> ( String, String )
+currentLocation model =
     case model of
         Loading _ params ->
-            params.path
+            ( params.library, params.path )
 
         Loaded state ->
-            state.listing.path
+            ( state.listing.library, state.listing.path )
 
         Failed _ ->
-            ""
+            ( "", "" )
 
 
-{-| Update query and page from a new URL without re-fetching the listing.
-Called by Main when the same directory is navigated to with different params.
+{-| Update the page number from a new URL without re-fetching the listing.
 -}
 updateParams : Route.BrowseParams -> Model -> ( Model, Cmd Msg )
 updateParams params model =
     case model of
         Loading key existingParams ->
-            ( Loading key { existingParams | query = params.query, page = params.page }
-            , Cmd.none
-            )
+            ( Loading key { existingParams | page = params.page }, Cmd.none )
 
         Loaded state ->
-            ( Loaded { state | query = params.query, page = params.page }
-            , Cmd.none
-            )
+            ( Loaded { state | page = params.page }, Cmd.none )
 
         Failed _ ->
             ( model, Cmd.none )
@@ -82,49 +96,63 @@ update msg model =
                     ( Loaded
                         { key = key
                         , listing = listing
-                        , query = params.query
                         , page = params.page
+                        , query = ""
+                        , expanded = Set.empty
                         }
                     , Cmd.none
                     )
 
-                _ ->
+                Loaded state ->
+                    -- A refetch after picking a main title keeps view state.
+                    ( Loaded { state | listing = listing }, Cmd.none )
+
+                Failed _ ->
                     ( model, Cmd.none )
 
         GotListing (Err err) ->
             ( Failed (httpErrorToString err), Cmd.none )
 
-        SearchInput q ->
+        QueryInput query ->
             case model of
                 Loaded state ->
-                    let
-                        newState =
-                            { state | query = q, page = 1 }
-
-                        url =
-                            Route.toString
-                                (Route.Browse
-                                    { path = state.listing.path
-                                    , query = q
-                                    , page = 1
-                                    }
-                                )
-                    in
-                    ( Loaded newState, Nav.replaceUrl state.key url )
+                    ( Loaded { state | query = query }, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
 
-        SearchCommit ->
+        QuerySubmit ->
             case model of
                 Loaded state ->
-                    ( model
+                    if String.isEmpty (String.trim state.query) then
+                        ( model, Cmd.none )
+
+                    else
+                        ( model
+                        , Nav.pushUrl state.key
+                            (Route.toString
+                                (Route.Search
+                                    { query = state.query
+                                    , library = Just state.listing.library
+                                    , page = 1
+                                    }
+                                )
+                            )
+                        )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        GoToPage page ->
+            case model of
+                Loaded state ->
+                    ( Loaded { state | page = page }
                     , Nav.pushUrl state.key
                         (Route.toString
                             (Route.Browse
-                                { path = state.listing.path
-                                , query = state.query
-                                , page = state.page
+                                { library = state.listing.library
+                                , path = state.listing.path
+                                , page = page
                                 }
                             )
                         )
@@ -133,162 +161,146 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        GoToPage p ->
+        ToggleSet discSet ->
             case model of
                 Loaded state ->
-                    let
-                        newState =
-                            { state | page = p }
+                    ( Loaded
+                        { state
+                            | expanded =
+                                if Set.member discSet state.expanded then
+                                    Set.remove discSet state.expanded
 
-                        url =
-                            Route.toString
-                                (Route.Browse
-                                    { path = state.listing.path
-                                    , query = state.query
-                                    , page = p
-                                    }
-                                )
-                    in
-                    ( Loaded newState, Nav.pushUrl state.key url )
+                                else
+                                    Set.insert discSet state.expanded
+                        }
+                    , Cmd.none
+                    )
 
                 _ ->
                     ( model, Cmd.none )
+
+        PickMain discSet path ->
+            case model of
+                Loaded state ->
+                    ( model
+                    , Api.postMainTitle
+                        { library = state.listing.library
+                        , discSet = discSet
+                        , path = path
+                        }
+                        MainPicked
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        MainPicked (Ok ()) ->
+            case model of
+                Loaded state ->
+                    ( model
+                    , Api.getBrowse
+                        state.listing.library
+                        state.listing.path
+                        GotListing
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        MainPicked (Err _) ->
+            ( model, Cmd.none )
 
 
 view : Model -> Html Msg
 view model =
     case model of
         Loading _ params ->
-            p [ style "padding" "1rem" ] [ text ("Loading " ++ params.path ++ "…") ]
+            p [ class "status-note" ]
+                [ text ("Loading " ++ params.library ++ "/" ++ params.path ++ "…") ]
 
         Failed err ->
-            p [ style "padding" "1rem", style "color" "var(--color-error)" ]
-                [ text ("Error: " ++ err) ]
+            Ui.errorText err
 
         Loaded state ->
             let
-                allDirs =
+                isDirectory entry =
+                    case entry of
+                        Directory _ ->
+                            True
+
+                        _ ->
+                            False
+
+                dirs =
                     state.listing.entries |> List.filter isDirectory
 
-                filteredVids =
-                    state.listing.entries |> List.filter (matchesQuery state.query)
-
-                totalVideos =
-                    List.length filteredVids
+                items =
+                    state.listing.entries
+                        |> List.filter (not << isDirectory)
 
                 totalPages =
-                    Basics.max 1 ((totalVideos + pageSize - 1) // pageSize)
+                    Basics.max 1 ((List.length items + pageSize - 1) // pageSize)
 
                 safePage =
                     Basics.min state.page totalPages
 
-                pageVids =
-                    filteredVids
+                pageEntries =
+                    items
                         |> List.drop ((safePage - 1) * pageSize)
                         |> List.take pageSize
-
-                noResults =
-                    List.isEmpty filteredVids && not (String.isEmpty state.query)
             in
             div []
-                [ viewBreadcrumb state.listing.path
+                [ viewBreadcrumb state.listing.library state.listing.path
                 , viewSearchBar state.query
-                , div [ style "padding" "0.5rem 1rem" ]
-                    (List.map viewEntry allDirs
-                        ++ (if noResults then
-                                [ p
-                                    [ style "padding" "1rem 0"
-                                    , style "color" "var(--color-text)"
-                                    ]
-                                    [ text ("No results for \"" ++ state.query ++ "\".") ]
-                                ]
-
-                            else
-                                List.map viewEntry pageVids
-                           )
+                , div [ class "listing" ]
+                    (List.map (viewEntry state.listing.library state.expanded) dirs
+                        ++ List.map
+                            (viewEntry state.listing.library state.expanded)
+                            pageEntries
                     )
                 , if totalPages > 1 then
-                    viewPagination safePage totalPages
+                    Ui.viewPagination GoToPage safePage totalPages
 
                   else
                     text ""
                 ]
 
 
-isDirectory : Entry -> Bool
-isDirectory entry =
-    case entry of
-        Directory _ ->
-            True
-
-        _ ->
-            False
-
-
-matchesQuery : String -> Entry -> Bool
-matchesQuery query entry =
-    case entry of
-        Video v ->
-            if String.isEmpty query then
-                True
-
-            else
-                let
-                    q =
-                        String.toLower query
-
-                    contains field =
-                        String.contains q (String.toLower field)
-
-                    inField =
-                        Maybe.map contains >> Maybe.withDefault False
-                in
-                contains v.name
-                    || inField v.title
-                    || inField v.description
-                    || inField v.channel
-
-        Directory _ ->
-            False
-
-
 viewSearchBar : String -> Html Msg
 viewSearchBar query =
     Html.form
-        [ onSubmit SearchCommit
-        , style "padding" "0.5rem 1rem"
-        , style "display" "flex"
-        , style "gap" "0.5rem"
-        ]
+        [ onSubmit QuerySubmit, class "search-form search-form-bar" ]
         [ input
             [ type_ "search"
-            , placeholder "Search…"
+            , placeholder "Search this library…"
             , value query
-            , onInput SearchInput
-            , style "flex" "1"
-            , style "padding" "0.4rem 0.6rem"
-            , style "font-size" "1rem"
-            , style "border" "1px solid var(--color-surface)"
-            , style "background" "var(--color-bg)"
-            , style "color" "var(--color-text)"
-            , style "border-radius" "4px"
+            , onInput QueryInput
+            , class "search-input"
             ]
             []
-        , button
-            [ type_ "submit"
-            , style "padding" "0.4rem 0.8rem"
-            , style "font-size" "1rem"
-            , style "cursor" "pointer"
-            ]
-            [ text "Search" ]
+        , button [ type_ "submit", class "search-button" ] [ text "Search" ]
         ]
 
 
-viewBreadcrumb : String -> Html Msg
-viewBreadcrumb path =
+viewBreadcrumb : String -> String -> Html Msg
+viewBreadcrumb library path =
     let
         parts =
             path |> String.split "/" |> List.filter (not << String.isEmpty)
+
+        libraryCrumb =
+            span []
+                [ text " / "
+                , a
+                    [ href
+                        (Route.toString
+                            (Route.Browse
+                                { library = library, path = "", page = 1 }
+                            )
+                        )
+                    ]
+                    [ text library ]
+                ]
 
         crumbs =
             List.indexedMap
@@ -303,7 +315,10 @@ viewBreadcrumb path =
                             [ href
                                 (Route.toString
                                     (Route.Browse
-                                        { path = crumbPath, query = "", page = 1 }
+                                        { library = library
+                                        , path = crumbPath
+                                        , page = 1
+                                        }
                                     )
                                 )
                             ]
@@ -312,138 +327,101 @@ viewBreadcrumb path =
                 )
                 parts
     in
-    nav [ style "padding" "0.75rem 1rem", style "background" "var(--color-surface)" ]
-        (a
-            [ href (Route.toString (Route.Browse { path = "", query = "", page = 1 })) ]
-            [ text "Home" ]
+    nav [ class "crumb-bar" ]
+        (a [ href (Route.toString Route.Home) ] [ text "Home" ]
+            :: libraryCrumb
             :: crumbs
         )
 
 
-viewEntry : Entry -> Html Msg
-viewEntry entry =
+viewEntry : String -> Set String -> Entry -> Html Msg
+viewEntry library expanded entry =
     case entry of
         Directory { name, path } ->
-            div [ style "padding" "0.5rem 0" ]
+            div [ class "dir-entry" ]
                 [ a
                     [ href
                         (Route.toString
-                            (Route.Browse { path = path, query = "", page = 1 })
+                            (Route.Browse
+                                { library = library
+                                , path = path
+                                , page = 1
+                                }
+                            )
                         )
                     ]
                     [ text ("📁 " ++ name) ]
                 ]
 
-        Video { name, path, thumbPath, title } ->
-            div [ style "display" "inline-block", style "margin" "0.5rem" ]
-                [ a [ href (Route.toString (Route.Player path)) ]
-                    [ case thumbPath of
-                        Just tp ->
-                            img
-                                [ src (Api.thumbUrl tp)
-                                , alt name
-                                , style "width" "200px"
-                                , style "height" "112px"
-                                , style "object-fit" "cover"
-                                , style "display" "block"
-                                ]
-                                []
+        Video item ->
+            Ui.videoCard item
 
-                        Nothing ->
-                            div
-                                [ style "width" "200px"
-                                , style "height" "112px"
-                                , style "background" "var(--color-placeholder)"
-                                , style "display" "flex"
-                                , style "align-items" "center"
-                                , style "justify-content" "center"
-                                ]
-                                [ text "▶" ]
-                    , div
-                        [ style "max-width" "200px"
-                        , style "overflow" "hidden"
-                        , style "text-overflow" "ellipsis"
-                        , style "white-space" "nowrap"
-                        , style "font-size" "0.85rem"
-                        , style "margin-top" "0.25rem"
-                        ]
-                        [ text (Maybe.withDefault name title) ]
-                    ]
+        DiscSet set ->
+            viewDiscSet (Set.member set.discSet expanded) set
+
+
+viewDiscSet : Bool -> DiscSetEntry -> Html Msg
+viewDiscSet isExpanded set =
+    div [ class "video-card" ]
+        [ Ui.videoCard set.main
+        , div [ class "disc-set-body" ]
+            [ button
+                [ onClick (ToggleSet set.discSet), class "disc-set-toggle" ]
+                [ text
+                    ((if isExpanded then
+                        "▾ "
+
+                      else
+                        "▸ "
+                     )
+                        ++ String.fromInt (List.length set.titles)
+                        ++ " titles"
+                    )
                 ]
+            , if isExpanded then
+                div [ class "disc-set-titles" ]
+                    (List.map (viewSetTitle set) set.titles)
 
-
-type PageItem
-    = Page Int
-    | Gap
-
-
-{-| Build a list of page items with gaps where pages are skipped.
-Always includes the first and last page, and pages within 2 of current.
--}
-pageItems : Int -> Int -> List PageItem
-pageItems current total =
-    let
-        shouldInclude i =
-            i == 1 || i == total || abs (i - current) <= 2
-
-        build i lastIncluded acc =
-            if i > total then
-                List.reverse acc
-
-            else if shouldInclude i then
-                let
-                    gapped =
-                        if lastIncluded >= 0 && i > lastIncluded + 1 then
-                            Gap :: acc
-
-                        else
-                            acc
-                in
-                build (i + 1) i (Page i :: gapped)
-
-            else
-                build (i + 1) lastIncluded acc
-    in
-    build 1 -1 []
-
-
-viewPagination : Int -> Int -> Html Msg
-viewPagination current total =
-    div
-        [ style "padding" "1rem"
-        , style "text-align" "center"
+              else
+                text ""
+            ]
         ]
-        (List.map (viewPageItem current) (pageItems current total))
 
 
-viewPageItem : Int -> PageItem -> Html Msg
-viewPageItem current item =
-    case item of
-        Gap ->
-            span
-                [ style "padding" "0.3rem 0.4rem"
-                , style "display" "inline-block"
+viewSetTitle : DiscSetEntry -> VideoItem -> Html Msg
+viewSetTitle set item =
+    let
+        isMain =
+            item.path == set.main.path
+    in
+    div [ class "disc-title-row" ]
+        [ a
+            [ href
+                (Route.toString
+                    (Route.Player { library = item.library, path = item.path })
+                )
+            , class "disc-title-link"
+            ]
+            [ text
+                ((if isMain then
+                    "★ "
+
+                  else
+                    ""
+                 )
+                    ++ item.name
+                )
+            ]
+        , if isMain then
+            text ""
+
+          else
+            button
+                [ onClick (PickMain set.discSet item.path)
+                , class "disc-main-button"
                 ]
-                [ text "…" ]
-
-        Page p ->
-            if p == current then
-                span
-                    [ style "padding" "0.3rem 0.6rem"
-                    , style "margin" "0 0.1rem"
-                    , style "font-weight" "bold"
-                    , style "display" "inline-block"
-                    ]
-                    [ text (String.fromInt p) ]
-
-            else
-                button
-                    [ onClick (GoToPage p)
-                    , style "padding" "0.3rem 0.6rem"
-                    , style "margin" "0 0.1rem"
-                    , style "cursor" "pointer"
-                    ]
-                    [ text (String.fromInt p) ]
+                [ text "Set as main" ]
+        ]
 
 
 httpErrorToString : Http.Error -> String

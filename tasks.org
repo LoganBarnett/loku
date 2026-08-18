@@ -24,6 +24,9 @@ everything.
 
 Design rationale is kept inline throughout so it is not re-derived later.
 
+The downloads dataset follows the same governing principle in its own tree — see
+"Downloads lifecycle (replace metube)".
+
 ** Scope and boundaries — what Loku does not do
 
 Loku deliberately does not replace Kodi.  Kodi's job is playing to a *specific
@@ -40,7 +43,7 @@ is Kodi's side of the boundary, not Loku's.
 
 ** Consume NFO sidecars
 
-*** NEXT Parse Kodi =.nfo= sidecar files
+*** DONE Parse Kodi =.nfo= sidecar files
 
 =.nfo= is XML despite the extension.  There is no formal schema — different
 generators (Kodi, tinyMediaManager, FileBot, Sonarr/Radarr) emit different
@@ -57,7 +60,7 @@ subsets — so parse liberally, not strictly.
 - Use a forgiving deserializer (=quick-xml= + =serde=).  Name the type =Nfo=
   (Pascal initialism), not =NFO=.
 
-*** TODO Mirror Kodi's NFO lookup rules
+*** DONE Mirror Kodi's NFO lookup rules
 
 So Loku and Kodi agree on which sidecar belongs to which video:
 
@@ -65,12 +68,18 @@ So Loku and Kodi agree on which sidecar belongs to which video:
 - Episodes → =Episode.nfo= beside the file; series-level data in =tvshow.nfo= at
   the show-folder level.
 
-*** TODO Surface NFO metadata in the browse/search UI
+*** DONE Surface NFO metadata in the browse/search UI
 
 Friendly titles and metadata should flow into the existing index and full-text
 search the same way yt-dlp =info.json= data does today.  This is the actual
 user-facing payoff — the "big bucket of videos" problem the whole effort exists
 to fix.
+
+Landed: NFO titles, years, genres, and plots flow through the SQLite index into
+browse, cross-library full-text search, and the player metadata panel.  Rips
+without an NFO get a cleaned filename title (marked as such via =title_source=,
+so the UI can style guessed titles differently) and an extracted thumbnail
+frame.
 
 ** Produce NFO sidecars (fold ripping into Loku)
 
@@ -113,7 +122,7 @@ without ever degrading the archival master.  This is the scope the "Loku governs
 everything" decision pulls in, and the part most likely to balloon — bound it
 deliberately.
 
-*** TODO Settle the format policy: master vs. playback representations
+*** DONE Settle the format policy: master vs. playback representations
 
 The full-quality whole-disc MKV is the archival *master* and the source Kodi
 plays to devices — it is never the thing degraded.  Loku's own in-browser
@@ -126,7 +135,19 @@ alongside the master, (b) remux on demand, or (c) transcode on the fly at stream
 time?  Whatever the answer, derived representations are *additive* — the master
 is authoritative and untouched.
 
-*** TODO Track per-item playback compatibility
+Decision: (a), an eager derived copy kept alongside the master.  A serial
+in-process worker produces =foo.compat.mp4= beside each master lacking a
+browser-playable representation — stream-copying browser-safe H.264 (the Blu-ray
+fast path: no CPU-hours, no quality loss), transcoding otherwise with
+deinterlacing for interlaced DVD sources, audio to AAC, faststart for immediate
+seek.  Eager rather than on-demand or live because the governing principle
+demands Loku /verify/ every item is serviceable up front: failures surface at
+ingest time in the index, not at play time in someone's evening.  Derived copies
+write beside masters via a =.part= rename, so they are Kodi-visible artifacts
+(excluded from its scan), restic-excludable, and rebuildable at will; the master
+is never modified.
+
+*** DONE Track per-item playback compatibility
 
 Loku should know, per library item, whether a directly-playable representation
 exists for its browser player.  Surface incompatible items explicitly rather
@@ -153,6 +174,13 @@ present, which depends on the derivation policy above and on whatever produces
 =.compat.mp4= today (an external pipeline).  An =info.json=-less item (e.g. a
 ripped disc) has unknown codecs, so it currently degrades to compat-or-bust; an
 =ffprobe= fallback would recover =native_type= for those.
+
+All three gaps are now closed: the =ffprobe= fallback fills codec facts for
+=info.json=-less items (cached per content), the in-process derivation worker
+guarantees the compat copy, and every API item carries a computed =derivation=
+status (=not_needed= / =done= / =processing= / =pending= / =failed= / =unknown=)
+that the UI surfaces as badges on cards and as an honest "being prepared" panel
+in the player instead of a doomed playback attempt.
 
 An end-to-end test of the actual browser selection needs a real Safari, which is
 impractical in CI; the server-side contract it rests on (byte-range serving,
@@ -253,6 +281,41 @@ requiring a full re-rip:
   eyeballed job anyway.  Reserve the structural-fingerprint path for go-forward
   automation, where the no-interaction payoff actually lands.
 
+* Downloads lifecycle (replace metube)
+
+The same governing principle as the disc tree, applied to the other dataset:
+Loku owns the download lifecycle end to end — piloting yt-dlp (not
+reimplementing it), organizing the output, and guaranteeing serviceable formats
+— replacing the standalone metube deployment in ~/dev/nix-config.  The consume
+side already treats yt-dlp trees as first-class (=info.json= metadata, index,
+search, compat guarantees); this tree covers taking over the production side.
+
+Prior art to absorb from =nixos-modules/metube.nix= in ~/dev/nix-config: the
+=YTDL_OPTIONS= set (=writeinfojson=, =writethumbnail=, the =ejs:github= remote
+component), the compat-copy postprocessor (which Loku's derivation worker now
+subsumes — downloads can transcode locally instead of double-downloading), and
+the =bgutil-pot= sidecar that provides PO tokens for YouTube bot checks.
+
+** TODO Pilot yt-dlp for one-off downloads
+
+A download endpoint + queue inside loku-server: accept a URL, run yt-dlp with
+the sidecar-writing options into the downloads library, surface progress and
+failures in the UI.  Serial execution, same worker discipline as compat
+derivation (=.part= staging is native to yt-dlp; the watcher already ignores
+it).  The bgutil-pot integration rides along as configuration.
+
+** TODO Channel subscriptions with serial-paced check-ins
+
+Track channels/playlists, check for new items on a schedule, and download at a
+deliberately serial pace to stay friendly to would-be rate limiting.  Not MVP;
+the one-off endpoint comes first.
+
+** TODO Retire metube in ~/dev/nix-config
+
+Once the download endpoint covers daily use: remove the metube module, host
+config, and fork-pinned package; keep =/tank/data/media= as the downloads
+library unchanged.
+
 * Cross-repo
 
 ** NEXT Interim: stop discarding =disc-info.txt= in =makemkv-ripper.nix=
@@ -264,16 +327,48 @@ rips from repeating the backlog problem.
 
 ** TODO Fold library-directory validation into MergeConfig once it supports a validate hook
 
-Loku's server config requires the media library directory to exist.  Because
+Loku's server config requires the media library directories to exist.  Because
 =MergeConfig= (in rust-template's =foundation-derive=) has no per-field
 validation hook, that existence check rides the =#[merge_config(skip)]= +
-=resolve_library_path= escape hatch, which also re-implements the CLI-or-file
-precedence by hand.  When rust-template adds a per-field =validate= /
-=parse_with= attribute that runs on the merged value — tracked in
-rust-template's =tasks.org= — collapse the skip+resolve into a single validated
-=library_path= field.
+=resolve_libraries= escape hatch, which also re-implements the CLI-or-file
+precedence by hand — and the multi-library rework added a second such field,
+=state_dir= (=resolve_state_dir=), with its own hand-rolled precedence chain.
+When rust-template adds a per-field =validate= / =parse_with= attribute that
+runs on the merged value — tracked in rust-template's =tasks.org= — collapse
+both skip+resolve pairs into validated fields.
 
-* TODO Split the browse Entry enum into separate video and directory types
+** TODO Set an explicit crane pname/version so builds stop warning on the nameless workspace root
+
+crane warns that the root =Cargo.toml= has no =name= during =nix build=.  The
+root is a virtual workspace (=[workspace]= with no =[package]=, which is
+correct), and the flake's shared =commonArgs= passes no =pname=/=version=, so
+crane falls back to reading a package name off the nameless root manifest.  The
+whole-workspace =default= package already passes =pname= explicitly; the shared
+args feeding the dependency build and the musl/gnu/cross helpers do not.
+
+The durable fix is in rust-template, which generates this flake, and is tracked
+at [[https://github.com/LoganBarnett/rust-template/issues/64]] (emit an explicit
+crane =pname=/=version= plus a compliance check); it will arrive here on a
+compliance sync.  To silence it sooner, the interim is to set =pname= and
+=version= on =commonArgs= in =flake.nix= locally.
+
+** TODO Drop the local musl toolchain shim once mkMuslPackages provides one
+
+The static musl release variant needs a musl C toolchain for any C in the
+dependency tree (the bundled SQLite was the first), or the =cc= crate falls back
+to the host glibc compiler and the link dies on fortify and large-file symbols
+musl never provides.  rust-template's =mkMuslPackages= sets the target and
+=+crt-static= but no compiler, so =flake.nix= here carries an interim
+=muslCommonArgs= overlay setting the target-scoped =CC= from =pkgsCross=, passed
+only to the musl builds so the cross toolchain stays out of every other build's
+closure.
+
+The durable fix is tracked at
+[[https://github.com/LoganBarnett/rust-template/issues/94]]; when it lands via
+compliance sync, delete the local overlay and pass plain =commonArgs= to
+=mkMuslPackages= again.
+
+* DONE Split the browse Entry enum into separate video and directory types
 
 =browse.rs='s =Entry= enum unions =Directory= (small) and =Video= (many metadata
 fields), so its size is dominated by the video case and clippy's
@@ -283,6 +378,11 @@ the lesser issue: callers that only ever deal with videos — a player view, a
 want.  Factoring =Video= into its own struct that =Entry= holds would both
 shrink the enum and give those callers a dedicated video type to work with
 directly.
+
+Landed as part of the index-backed browse rewrite: =Entry= is now
+struct-per-variant (=DirEntry=, boxed =VideoItem=, boxed =DiscSetEntry=), the
+=large_enum_variant= allow is gone, and the video-only callers (the item and
+search APIs) work with =VideoItem= directly.
 
 * TODO Reconcile ERROR_HANDLING.org with the template's error-handling docs
 

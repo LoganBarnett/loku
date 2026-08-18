@@ -16,6 +16,11 @@ test: build-elm test-rust
 test-rust:
     cargo test --workspace
 
+# Run the ffmpeg-dependent tests, which are ignored by default because they
+# need real ffmpeg/ffprobe binaries (the dev shell provides them).
+test-ffmpeg:
+    cargo test --workspace -- --ignored
+
 # Build Elm then run via cargo, forwarding all arguments.
 run *args: build-elm
     cargo run {{args}}

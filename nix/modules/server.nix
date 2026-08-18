@@ -7,7 +7,10 @@
 #
 #   services.loku-server = {
 #     enable = true;
-#     libraryPath = "/media/videos";
+#     libraries = {
+#       downloads = { path = "/media/videos"; kind = "downloads"; };
+#       discs = { path = "/media/rips"; kind = "discs"; };
+#     };
 #   };
 #
 # To use TCP instead:
@@ -16,7 +19,7 @@
 #     enable = true;
 #     socket = null;
 #     port = 8080;
-#     libraryPath = "/media/videos";
+#     libraries.downloads = { path = "/media/videos"; kind = "downloads"; };
 #   };
 #
 # To reference the socket from a reverse proxy (e.g. nginx):
@@ -26,6 +29,11 @@
 #
 # Note: when using socket mode the reverse proxy user must be a member of the
 # service group (cfg.group) so it can connect to the socket.
+#
+# Library paths are mounted read-write: the server writes derived files
+# (browser-compatible .compat.mp4 copies and .jpg thumbnails) beside the
+# master videos.  Masters are never modified.  Other consumers of the same
+# trees (e.g. Kodi) should exclude *.compat.mp4 from their scans.
 {self}: {
   config,
   lib,
@@ -33,6 +41,24 @@
   ...
 }: let
   cfg = config.services.loku-server;
+  settingsFormat = pkgs.formats.toml {};
+  # The config file is the honest way to express the library list; the CLI
+  # only offers a single-root convenience flag.
+  configFile = settingsFormat.generate "loku-config.toml" {
+    listen =
+      if cfg.socket != null
+      then "sd-listen"
+      else "${cfg.host}:${toString cfg.port}";
+    log_level = cfg.logLevel;
+    log_format = cfg.logFormat;
+    library =
+      lib.mapAttrsToList (name: value: {
+        inherit name;
+        path = toString value.path;
+        kind = value.kind;
+      })
+      cfg.libraries;
+  };
 in {
   options.services.loku-server = {
     enable = lib.mkEnableOption "loku-server video service";
@@ -84,10 +110,45 @@ in {
       '';
     };
 
-    libraryPath = lib.mkOption {
-      type = lib.types.path;
-      description = "Root directory of the video library to serve.";
-      example = "/media/videos";
+    libraries = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule {
+        options = {
+          path = lib.mkOption {
+            type = lib.types.path;
+            description = "Root directory of this library.";
+            example = "/media/videos";
+          };
+          kind = lib.mkOption {
+            type = lib.types.enum ["downloads" "discs"];
+            description = ''
+              What the library holds: "downloads" for yt-dlp style trees
+              with info.json sidecars, "discs" for MakeMKV disc rips.
+            '';
+          };
+        };
+      });
+      description = ''
+        The library roots to serve, keyed by name.  Names become URL path
+        segments (/files/<name>/…), so keep them to lowercase ASCII
+        letters, digits, '_', and '-'.  The server treats the first entry
+        (in lexicographic name order) as the default browse target.
+      '';
+      example = lib.literalExpression ''
+        {
+          downloads = { path = "/media/videos"; kind = "downloads"; };
+          discs = { path = "/media/rips"; kind = "discs"; };
+        }
+      '';
+    };
+
+    ffmpegPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.ffmpeg-headless;
+      defaultText = lib.literalExpression "pkgs.ffmpeg-headless";
+      description = ''
+        Provides the ffprobe/ffmpeg binaries used for codec probing and
+        compat-copy derivation; headless keeps the closure small.
+      '';
     };
 
     user = lib.mkOption {
@@ -104,6 +165,13 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.libraries != {};
+        message = "services.loku-server.libraries must define at least one library.";
+      }
+    ];
+
     users.users.${cfg.user} = {
       isSystemUser = true;
       group = cfg.group;
@@ -142,6 +210,11 @@ in {
       requires =
         lib.optional (cfg.socket != null) "loku-server.socket";
 
+      # ffprobe/ffmpeg power the codec probe pass and the compat-derivation
+      # worker; without them the server runs degraded (no probing, no
+      # derived copies).
+      path = [cfg.ffmpegPackage];
+
       serviceConfig = {
         # Type = notify causes systemd to wait for the binary to call
         # sd_notify(READY=1) before marking the unit active.  Foundation's
@@ -156,21 +229,16 @@ in {
         # via systemd.services.loku-server.serviceConfig.WatchdogSec.
         WatchdogSec = lib.mkDefault "30s";
 
-        ExecStart =
-          "${cfg.package}/bin/loku-server"
-          + (
-            if cfg.socket != null
-            then " --listen sd-listen"
-            else " --listen ${cfg.host}:${toString cfg.port}"
-          )
-          + " --library ${cfg.libraryPath}"
-          + " --log-level ${cfg.logLevel}"
-          + " --log-format ${cfg.logFormat}";
+        ExecStart = "${cfg.package}/bin/loku-server --config ${configFile}";
 
         User = cfg.user;
         Group = cfg.group;
         Restart = "on-failure";
         RestartSec = "5s";
+
+        # The media index database lands in /var/lib/loku-server; the server
+        # discovers it via the STATE_DIRECTORY environment variable.
+        StateDirectory = "loku-server";
 
         # Harden the service environment.
         NoNewPrivileges = true;
@@ -178,10 +246,10 @@ in {
         ProtectSystem = "strict";
         ProtectHome = true;
 
-        # Grant read access to the video library.  ProtectSystem = "strict"
-        # makes the whole filesystem read-only by default, so the library
-        # directory must be explicitly allowed.
-        BindReadOnlyPaths = [cfg.libraryPath];
+        # ProtectSystem = "strict" makes the whole filesystem read-only by
+        # default.  Libraries are read-write because derived compat copies
+        # and thumbnails are written beside the masters.
+        ReadWritePaths = lib.mapAttrsToList (_: value: value.path) cfg.libraries;
       };
     };
   };

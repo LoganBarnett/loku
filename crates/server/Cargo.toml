@@ -42,6 +42,18 @@ openidconnect = { workspace = true }
 # directory (defaulting to the in-tree frontend/public) and exports it as
 # RUST_TEMPLATE_FRONTEND_DIR for the Frontend derive.
 rust-embed = { workspace = true }
+# Embedded SQLite (bundled, FTS5) backing the media index.
+rusqlite = { workspace = true }
+# Async access to the index's SQLite connection from axum handlers.
+tokio-rusqlite = { workspace = true }
+# Recursive library walking for the index scanner.
+walkdir = { workspace = true }
+# Filesystem events driving incremental index updates.
+notify = { workspace = true }
+# Dyn-safe async FfmpegRunner trait; lets tests inject a fake runner.
+async-trait = { workspace = true }
+# Stream combinators for sequential async iteration instead of for loops.
+futures-util = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

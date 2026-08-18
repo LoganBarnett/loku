@@ -5,21 +5,26 @@
 
 * Introduction
 
-Loku is a local video browser and player.  Point it at a directory of videos and
-get a browseable, searchable interface in your web browser — no database
-required.
+Loku is a local video browser and player.  Point it at one or more media
+directories and get a browseable, searchable interface in your web browser.
 
-It pairs well with [[https://github.com/yt-dlp/yt-dlp][yt-dlp]]: download a channel's videos alongside their metadata
-and thumbnails, then browse them through Loku as if they were a local streaming
-library.
+It pairs well with [[https://github.com/yt-dlp/yt-dlp][yt-dlp]] (download a channel's videos alongside their metadata
+and thumbnails) and with [[https://www.makemkv.com/][MakeMKV]] disc rips, which it turns into first-class
+library items: friendly titles from Kodi =.nfo= sidecars or cleaned-up rip
+filenames, extracted thumbnails, and a guaranteed browser-playable copy produced
+by a built-in ffmpeg worker.
 
 Key characteristics:
 
-- Browse videos organized by directory hierarchy.
-- Full-text search over yt-dlp metadata (=info.json= files).
-- Thumbnails shown wherever the video player or index provides them.
-- In-browser video playback — no separate media player required.
-- No database; directory listings + lightweight in-memory cache.
+- Multiple named libraries, each typed as yt-dlp =downloads= or MakeMKV =discs=.
+- Full-text search across every library at once, over yt-dlp =info.json= and
+  Kodi =.nfo= metadata plus filenames.
+- Multi-title disc rips grouped into one item with a pick-the-main-title flow.
+- In-browser playback with codec-aware source selection; masters that browsers
+  cannot play get an automatically derived H.264/AAC compat copy (the original
+  file is never modified).
+- A rebuildable SQLite index kept current by filesystem watching; sidecar files
+  remain the source of truth.
 
 * Installation
 
@@ -33,7 +38,7 @@ cd loku
 cargo build --release
 #+end_src
 
-The binary is at =target/release/loku-web=.
+The binary is at =target/release/loku-server=.
 
 ** With Nix
 
@@ -43,30 +48,57 @@ nix run github:LoganBarnett/loku
 
 * Usage
 
-Start the server, pointing it at your video library:
+Start the server, pointing it at a video library:
 
 #+begin_src sh
-loku-web --library /path/to/videos
+loku-server --library /path/to/videos
 #+end_src
 
 Then open =http://localhost:3000= in a browser.
 
-| Flag          | Default         | Description                    |
-|---------------+-----------------+--------------------------------|
-| =--library=   | =.=             | Root directory for video files |
-| =--host=      | =127.0.0.1=     | Bind address                   |
-| =--port=      | =3000=          | Bind port                      |
-| =--log-level= | =info=          | Logging verbosity              |
+=--library= is single-root convenience; multi-library setups define =[[library]]=
+entries in a config file instead (see =config.example.toml=) and pass
+=--config=:
+
+#+begin_src toml
+[[library]]
+name = "downloads"
+path = "/media/videos"
+kind = "downloads"
+
+[[library]]
+name = "discs"
+path = "/media/rips"
+kind = "discs"
+#+end_src
+
+| Flag          | Default             | Description                          |
+|---------------+---------------------+--------------------------------------|
+| =--config=    | discovered          | Path to the TOML config file         |
+| =--library=   | (none)              | Single downloads-kind root shortcut  |
+| =--listen=    | =127.0.0.1:3000=    | =host:port=, socket path, or         |
+|               |                     | =sd-listen=                          |
+| =--state-dir= | =STATE_DIRECTORY= / | Where the media index database lives |
+|               | XDG state home      |                                      |
+| =--log-level= | =info=              | Logging verbosity                    |
+
+=ffmpeg= and =ffprobe= on =PATH= enable codec probing and compat derivation;
+without them Loku still browses and serves, with those features disabled and
+=/healthz= reporting a degraded =media-tools= component.
 
 * Gotchas and Tradeoffs
 
-- *No database*: metadata is read from =info.json= files on every request (with
-  an in-memory cache).  Cold startup on very large libraries may be slow.
-- *yt-dlp layout assumed*: metadata search expects =<video>.info.json= files
-  produced by =yt-dlp --write-info-json=.  Plain video files without sidecar
-  JSON are still browseable but unsearchable.
-- *Local only by default*: the default bind is =127.0.0.1=.  Use =--host
-  0.0.0.0= to expose on the LAN, but there is no authentication.
+- *The index is derived, the filesystem is truth*: metadata comes from sidecars
+  (=info.json=, Kodi =.nfo=, thumbnails, =.compat.mp4=) indexed into SQLite in
+  the state directory.  Deleting the state directory only costs a rescan (plus
+  any manual main-title picks).
+- *Derived files live beside masters*: the worker writes =foo.compat.mp4= and
+  =foo.jpg= next to =foo.mkv=, so library paths must be writable by the server
+  and other consumers of the same trees (e.g. Kodi) should exclude
+  =*.compat.mp4= from their scans.
+- *Local only by default*: the default bind is =127.0.0.1=.  Use =--listen
+  0.0.0.0:3000= to expose on the LAN; for real deployments use the NixOS
+  module's socket activation behind a TLS proxy with OIDC.
 
 * Upgrading
 

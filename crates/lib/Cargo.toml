@@ -14,6 +14,8 @@ rust-template-foundation = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+# Deserializes Kodi .nfo sidecar XML into the Nfo domain types.
+quick-xml = { workspace = true }
 # Enables method chaining and reduces superfluous local variables that only
 # exist to name intermediate results.  Prefer .tap() over temporary variables
 # when it improves readability.

@@ -1,3 +1,14 @@
+//! The browse API: one directory listing per request, served from the media
+//! index.
+//!
+//! Listings are index-backed, so entries carry the full metadata the scanner
+//! resolved (NFO titles, probed codecs, derivation status) and paths act as
+//! opaque database keys — traversal cannot reach anything the scanner did
+//! not index.  The only filesystem touch is an existence check that keeps
+//! the 404-versus-empty distinction (an index of video-bearing directories
+//! cannot tell those apart) and preserves the traversal guard on the
+//! query's path parameter.
+
 use aide::transform::TransformOperation;
 use axum::{
   extract::{Query, State},
@@ -7,95 +18,87 @@ use axum::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::{ffi::OsStr, fs, path::Path};
+use std::collections::{BTreeMap, HashMap};
+use tap::Tap;
 use thiserror::Error;
-use tracing::warn;
 
+use crate::index::store::{BrowseData, IndexError, VideoRecord};
+use crate::library::{Library, LibraryKind};
+use crate::media::worker::ActiveDerivation;
+use crate::routes::types::VideoItem;
 use crate::web_base::AppState;
-
-const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "avi", "mov"];
-const THUMB_EXTENSIONS: &[&str] = &["jpg", "webp", "png"];
+use loku_lib::disc;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BrowseQuery {
+  /// Which library to browse; defaults to the first configured library so
+  /// single-library setups need no parameter.
+  pub library: Option<String>,
   #[serde(default)]
   pub path: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct DirListing {
+  /// The library the listing came from — the resolved name, so clients that
+  /// omitted the parameter learn which library the default landed on.
+  pub library: String,
   pub path: String,
   pub entries: Vec<Entry>,
 }
 
-// The `Video` variant carries far more than `Directory`, so
-// `large_enum_variant` fires.  Allowed here (not workspace-wide) because the
-// size is acceptable for now; factoring `Video` into its own type would shrink
-// the enum and give callers that only handle videos a dedicated type.  See
-// tasks.org.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
+pub struct DirEntry {
+  pub name: String,
+  pub path: String,
+}
+
+/// A multi-title disc rip presented as one item: the presumed main title
+/// plus every title on the disc.  Singleton rips stay plain videos.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DiscSetEntry {
+  /// The set's grouping key (the shared filename prefix), used when posting
+  /// a main-title override.
+  pub disc_set: String,
+  /// Cleaned-up display title for the set as a whole.
+  pub display_title: String,
+  pub main: VideoItem,
+  /// Every title in the set, main included, in disc order.
+  pub titles: Vec<VideoItem>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Entry {
-  Directory {
-    name: String,
-    path: String,
-  },
-  Video {
-    name: String,
-    path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thumb_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    duration_secs: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    upload_date: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    compat_path: Option<String>,
-    // The exact `<source type>` string for the native file — a web-standard
-    // container MIME with an RFC 6381 codecs parameter (e.g. `video/mp4;
-    // codecs="av01.0.05M.08, opus"`).  It lets the browser's canPlayType decide
-    // authoritatively whether it can play the native file, so an incapable
-    // browser skips it without downloading rather than committing to a file it
-    // cannot decode.  `None` when the container is non-standard or the codecs
-    // are unknown, in which case the player serves only the compat copy.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    native_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    channel: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    channel_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    webpage_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    view_count: Option<u64>,
-  },
+  Directory(DirEntry),
+  Video(Box<VideoItem>),
+  DiscSet(Box<DiscSetEntry>),
+}
+
+impl Entry {
+  /// The name listings sort by, directory-first grouping aside.
+  fn sort_name(&self) -> &str {
+    match self {
+      Entry::Directory(dir) => &dir.name,
+      Entry::Video(video) => &video.name,
+      Entry::DiscSet(set) => &set.display_title,
+    }
+  }
 }
 
 #[derive(Debug, Error)]
 pub(crate) enum BrowseError {
+  #[error("Library '{name}' is not configured")]
+  UnknownLibrary { name: String },
+
   #[error("Path traversal attempt: '{path}' escapes the library root")]
   PathTraversal { path: String },
 
   #[error("Directory '{path}' not found in library")]
   DirectoryNotFound { path: String },
 
-  #[error("Failed to read library directory '{path}': {source}")]
-  LibraryDirectoryRead {
-    path: String,
-    source: std::io::Error,
-  },
-
-  #[error("Failed to canonicalize library root '{path}': {source}")]
-  LibraryRootCanonicalize {
-    path: String,
-    source: std::io::Error,
-  },
+  #[error(transparent)]
+  Index(#[from] IndexError),
 }
 
 impl aide::operation::OperationOutput for BrowseError {
@@ -106,425 +109,208 @@ impl IntoResponse for BrowseError {
   fn into_response(self) -> Response {
     let status = match &self {
       BrowseError::PathTraversal { .. } => StatusCode::BAD_REQUEST,
-      BrowseError::DirectoryNotFound { .. } => StatusCode::NOT_FOUND,
-      BrowseError::LibraryDirectoryRead { .. }
-      | BrowseError::LibraryRootCanonicalize { .. } => {
-        StatusCode::INTERNAL_SERVER_ERROR
-      }
+      BrowseError::UnknownLibrary { .. }
+      | BrowseError::DirectoryNotFound { .. } => StatusCode::NOT_FOUND,
+      BrowseError::Index(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, self.to_string()).into_response()
   }
 }
 
 pub(crate) fn browse_docs(op: TransformOperation) -> TransformOperation {
-  op.description("List videos and subdirectories under a library path.")
-    .response::<200, Json<DirListing>>()
-    .response_with::<400, (), _>(|r| r.description("Path traversal attempt."))
-    .response_with::<404, (), _>(|r| r.description("Directory not found."))
-    .response_with::<500, (), _>(|r| r.description("Failed to read directory."))
+  op.description(
+    "List videos, disc sets, and subdirectories under a library path.",
+  )
+  .response::<200, Json<DirListing>>()
+  .response_with::<400, (), _>(|r| r.description("Path traversal attempt."))
+  .response_with::<404, (), _>(|r| {
+    r.description("Unknown library or directory not found.")
+  })
+  .response_with::<500, (), _>(|r| r.description("Index query failed."))
 }
 
 pub(crate) async fn handler(
   State(state): State<AppState>,
   Query(params): Query<BrowseQuery>,
 ) -> Result<Json<DirListing>, BrowseError> {
-  let library_root = &state.library_path;
+  let library = params
+    .library
+    .as_deref()
+    .map_or_else(|| state.libraries.first(), |name| state.library(name))
+    .ok_or_else(|| BrowseError::UnknownLibrary {
+      name: params.library.clone().unwrap_or_default(),
+    })?;
 
-  // Canonicalize the library root so that prefix checks work correctly even
-  // when it contains symlinks or relative components.
-  let canonical_root = library_root.canonicalize().map_err(|source| {
-    BrowseError::LibraryRootCanonicalize {
-      path: library_root.to_string_lossy().to_string(),
-      source,
-    }
-  })?;
-
-  // Strip any leading slash so that joining works regardless of input form.
   let rel_path = params.path.trim_start_matches('/');
-  let target = library_root.join(rel_path);
+  ensure_directory_exists(library, rel_path, &params.path)?;
 
-  let canonical_target =
-    target
-      .canonicalize()
-      .map_err(|_| BrowseError::DirectoryNotFound {
-        path: params.path.clone(),
-      })?;
-
-  if !canonical_target.starts_with(&canonical_root) {
-    return Err(BrowseError::PathTraversal {
-      path: params.path.clone(),
-    });
-  }
-
-  let read_dir = fs::read_dir(&canonical_target).map_err(|source| {
-    BrowseError::LibraryDirectoryRead {
-      path: params.path.clone(),
-      source,
-    }
-  })?;
-
-  let mut dirs: Vec<Entry> = Vec::new();
-  let mut videos: Vec<Entry> = Vec::new();
-
-  for entry_result in read_dir {
-    let Ok(entry) = entry_result else { continue };
-    let Ok(file_type) = entry.file_type() else {
-      continue;
-    };
-    let entry_path = entry.path();
-    let name = entry.file_name().to_string_lossy().to_string();
-
-    let rel_entry_path = entry_path
-      .strip_prefix(&canonical_root)
-      .unwrap_or(&entry_path)
-      .to_string_lossy()
-      .to_string();
-
-    if file_type.is_dir() {
-      dirs.push(Entry::Directory {
-        name,
-        path: rel_entry_path,
-      });
-    } else if file_type.is_file() {
-      let ext = entry_path
-        .extension()
-        .and_then(OsStr::to_str)
-        .unwrap_or("")
-        .to_lowercase();
-
-      if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
-        let stem = entry_path.file_stem().unwrap_or_default();
-        // Skip companion compatibility copies (e.g. foo.compat.mp4).
-        if stem.to_string_lossy().ends_with(".compat") {
-          continue;
-        }
-        let parent = entry_path.parent().unwrap_or(Path::new(""));
-
-        let thumb_path = find_thumbnail(parent, stem, &canonical_root);
-        let info = read_info_json(parent, stem);
-        let compat_path = find_compat(parent, stem, &canonical_root);
-        let native_type = native_source_type(
-          &ext,
-          info.vcodec.as_deref(),
-          info.acodec.as_deref(),
-        );
-
-        videos.push(Entry::Video {
-          name,
-          path: rel_entry_path,
-          thumb_path,
-          title: info.title,
-          duration_secs: info.duration_secs,
-          upload_date: info.upload_date,
-          compat_path,
-          native_type,
-          description: info.description,
-          channel: info.channel,
-          channel_url: info.channel_url,
-          webpage_url: info.webpage_url,
-          view_count: info.view_count,
-        });
-      }
-    }
-  }
-
-  dirs.sort_by(|a, b| {
-    if let (
-      Entry::Directory { name: na, .. },
-      Entry::Directory { name: nb, .. },
-    ) = (a, b)
-    {
-      na.cmp(nb)
-    } else {
-      std::cmp::Ordering::Equal
-    }
-  });
-
-  videos.sort_by(|a, b| {
-    if let (Entry::Video { name: na, .. }, Entry::Video { name: nb, .. }) =
-      (a, b)
-    {
-      na.cmp(nb)
-    } else {
-      std::cmp::Ordering::Equal
-    }
-  });
-
-  let mut entries = dirs;
-  entries.extend(videos);
+  let data = state
+    .index
+    .browse_directory(&library.name, rel_path)
+    .await?;
+  let active = state.derivation_active.borrow().clone();
+  let entries = assemble_entries(library, rel_path, data, active.as_ref());
 
   Ok(Json(DirListing {
+    library: library.name.clone(),
     path: params.path,
     entries,
   }))
 }
 
-fn sidecar_path(
-  parent: &Path,
-  stem: &OsStr,
-  suffix: &str,
-) -> std::path::PathBuf {
-  // Append the suffix directly to the stem so that compound-extension names
-  // like "foo.mov.webm" (stem "foo.mov") resolve to "foo.mov.webp" rather
-  // than "foo.webp" as Path::with_extension would produce.
-  let mut name = stem.to_os_string();
-  name.push(suffix);
-  parent.join(name)
-}
-
-fn find_compat(
-  parent: &Path,
-  stem: &OsStr,
-  canonical_root: &Path,
-) -> Option<String> {
-  let p = sidecar_path(parent, stem, ".compat.mp4");
-  if p.exists() {
-    p.strip_prefix(canonical_root)
-      .ok()
-      .map(|r| r.to_string_lossy().to_string())
-  } else {
-    None
-  }
-}
-
-/// Build the `<source type>` string the player should advertise for the native
-/// file, or `None` when the native should not be offered as a typed source.
-///
-/// The value is a web-standard container MIME plus an RFC 6381 codecs
-/// parameter, which is what lets a browser's `canPlayType` decide up front
-/// whether it can play the file.  A container MIME alone cannot: `video/mp4`
-/// says nothing about whether the bytes inside are H.264 (which Safari
-/// hardware-decodes) or AV1 (which most Safari builds cannot decode at all), so
-/// Safari would commit to the source and download it before failing.  Naming
-/// the codec makes the rejection happen before any bytes move.
-///
-/// Non-standard containers (MKV, AVI, MOV) have no MIME `canPlayType` accepts,
-/// and an unrecognized codec cannot be named honestly, so both return `None` —
-/// the player then serves only the compat copy rather than risk a wrong hint.
-fn native_source_type(
-  ext: &str,
-  vcodec: Option<&str>,
-  acodec: Option<&str>,
-) -> Option<String> {
-  let container = match ext {
-    "mp4" => "video/mp4",
-    "webm" => "video/webm",
-    _ => return None,
-  };
-  // The video codec is the discriminating signal, so a missing or unrecognized
-  // one drops the native source entirely rather than emitting a bare container
-  // type that reintroduces the download-then-fail behavior.
-  let video = video_codec_token(vcodec?)?;
-  let codecs = match acodec.and_then(audio_codec_token) {
-    Some(audio) => format!("{video}, {audio}"),
-    None => video,
-  };
-  Some(format!("{container}; codecs=\"{codecs}\""))
-}
-
-/// Map a yt-dlp `vcodec` value to an RFC 6381 codecs token.
-///
-/// Modern yt-dlp already emits the full form (`avc1.640028`, `av01.0.05M.08`,
-/// `vp09.00.10.08`); that carries the exact profile and level, so pass it
-/// through unchanged.  Bare names are the rare fallback: map them to a value
-/// the browser accepts, honest about *which* codec even if not its exact
-/// profile — the profile in a `type` hint only gates selection, and the browser
-/// decodes whatever the file actually contains once selected.
-fn video_codec_token(vcodec: &str) -> Option<String> {
-  if vcodec.contains('.') {
-    Some(vcodec.to_string())
-  } else {
-    match vcodec {
-      // Bare vp8/vp9 name no profile, which is safest: the browser plays any
-      // profile the file contains rather than being told a specific one.
-      "vp8" => Some("vp8".to_string()),
-      "vp9" => Some("vp9".to_string()),
-      // A bare "av1" is not a valid token, so synthesize a representative Main
-      // profile string; AV1-incapable browsers reject any av01.* form anyway.
-      "av1" => Some("av01.0.05M.08".to_string()),
-      "h264" | "avc" | "avc1" => Some("avc1.42E01E".to_string()),
-      "h265" | "hevc" | "hvc1" | "hev1" => Some("hvc1.1.6.L93.B0".to_string()),
-      _ => None,
+/// The one filesystem touch: reject paths that escape the library root and
+/// distinguish an empty-but-real directory (200 with no entries) from a
+/// nonexistent one (404).  Listing content itself comes from the index.
+fn ensure_directory_exists(
+  library: &Library,
+  rel_path: &str,
+  requested: &str,
+) -> Result<(), BrowseError> {
+  let canonical_root = library.path.canonicalize().map_err(|_| {
+    BrowseError::DirectoryNotFound {
+      path: requested.to_string(),
     }
+  })?;
+  let canonical_target =
+    library.path.join(rel_path).canonicalize().map_err(|_| {
+      BrowseError::DirectoryNotFound {
+        path: requested.to_string(),
+      }
+    })?;
+  if !canonical_target.starts_with(&canonical_root) {
+    return Err(BrowseError::PathTraversal {
+      path: requested.to_string(),
+    });
   }
+  if !canonical_target.is_dir() {
+    return Err(BrowseError::DirectoryNotFound {
+      path: requested.to_string(),
+    });
+  }
+  Ok(())
 }
 
-/// Map a yt-dlp `acodec` value to an RFC 6381 codecs token, or `None` to omit
-/// the audio token (a video-only codecs string is still valid).  Omitting an
-/// unknown audio codec is safe: the video codec already drives the browser's
-/// accept/reject decision for the container.
-fn audio_codec_token(acodec: &str) -> Option<String> {
-  if acodec.contains('.') {
-    Some(acodec.to_string())
-  } else {
-    match acodec {
-      "aac" => Some("mp4a.40.2".to_string()),
-      "opus" => Some("opus".to_string()),
-      "vorbis" => Some("vorbis".to_string()),
-      _ => None,
-    }
-  }
+/// Assemble the listing: subdirectories first (alphabetical), then videos
+/// and disc sets sorted together by display name.  Multi-title disc sets in
+/// discs-kind libraries collapse into one entry each; singleton "sets" are
+/// just videos, since a one-item card would be noise.
+fn assemble_entries(
+  library: &Library,
+  rel_path: &str,
+  data: BrowseData,
+  active: Option<&ActiveDerivation>,
+) -> Vec<Entry> {
+  let (sets, singles) = disc_set_groups(library.kind, data.videos);
+  let (multi_sets, singleton_sets): (BTreeMap<_, _>, BTreeMap<_, _>) =
+    sets.into_iter().partition(|(_, records)| records.len() > 1);
+
+  let items = multi_sets
+    .into_iter()
+    .filter_map(|(set_name, records)| {
+      disc_set_entry(set_name, records, &data.overrides, active)
+    })
+    .chain(
+      singles
+        .into_iter()
+        .chain(singleton_sets.into_values().flatten())
+        .map(|record| {
+          Entry::Video(Box::new(VideoItem::from_record(record, active)))
+        }),
+    )
+    .collect::<Vec<_>>()
+    .tap_mut(|items| items.sort_by(|a, b| a.sort_name().cmp(b.sort_name())));
+
+  directory_entries(rel_path, data.subdirectories)
+    .chain(items)
+    .collect()
 }
 
-fn find_thumbnail(
-  parent: &Path,
-  stem: &OsStr,
-  canonical_root: &Path,
-) -> Option<String> {
-  THUMB_EXTENSIONS.iter().find_map(|ext| {
-    let thumb = sidecar_path(parent, stem, &format!(".{ext}"));
-    if thumb.exists() {
-      thumb
-        .strip_prefix(canonical_root)
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
-    } else {
-      None
-    }
+/// Subdirectory entries with their paths joined onto the browse path.
+fn directory_entries(
+  rel_path: &str,
+  subdirectories: Vec<String>,
+) -> impl Iterator<Item = Entry> + '_ {
+  subdirectories.into_iter().map(move |name| {
+    Entry::Directory(DirEntry {
+      path: child_rel_path(rel_path, &name),
+      name,
+    })
   })
 }
 
-struct InfoJson {
-  title: Option<String>,
-  duration_secs: Option<f64>,
-  upload_date: Option<String>,
-  description: Option<String>,
-  channel: Option<String>,
-  channel_url: Option<String>,
-  webpage_url: Option<String>,
-  view_count: Option<u64>,
-  vcodec: Option<String>,
-  acodec: Option<String>,
-}
-
-fn read_info_json(parent: &Path, stem: &OsStr) -> InfoJson {
-  let info_path = sidecar_path(parent, stem, ".info.json");
-
-  let default = InfoJson {
-    title: None,
-    duration_secs: None,
-    upload_date: None,
-    description: None,
-    channel: None,
-    channel_url: None,
-    webpage_url: None,
-    view_count: None,
-    vcodec: None,
-    acodec: None,
-  };
-
-  let contents = match fs::read_to_string(&info_path) {
-    Ok(c) => c,
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return default,
-    Err(e) => {
-      warn!(path = %info_path.display(), error = %e, "Failed to read info.json sidecar");
-      return default;
-    }
-  };
-
-  let json = match serde_json::from_str::<Value>(&contents) {
-    Ok(v) => v,
-    Err(e) => {
-      warn!(path = %info_path.display(), error = %e, "Failed to parse info.json sidecar");
-      return default;
-    }
-  };
-
-  let str_field =
-    |key: &str| json.get(key).and_then(Value::as_str).map(str::to_string);
-
-  // yt-dlp writes the literal string "none" for an absent video or audio
-  // track (e.g. a video-only or audio-only format), so treat that as absent
-  // rather than a codec name.
-  let codec_field = |key: &str| {
-    json
-      .get(key)
-      .and_then(Value::as_str)
-      .filter(|v| *v != "none")
-      .map(str::to_string)
-  };
-
-  InfoJson {
-    title: str_field("title"),
-    duration_secs: json.get("duration").and_then(Value::as_f64),
-    upload_date: str_field("upload_date"),
-    description: str_field("description"),
-    channel: str_field("channel"),
-    channel_url: str_field("channel_url"),
-    webpage_url: str_field("webpage_url"),
-    view_count: json.get("view_count").and_then(Value::as_u64),
-    vcodec: codec_field("vcodec"),
-    acodec: codec_field("acodec"),
+/// The library-relative path of a child name under a directory path, where
+/// the empty string is the library root.
+fn child_rel_path(rel_path: &str, name: &str) -> String {
+  if rel_path.is_empty() {
+    name.to_string()
+  } else {
+    format!("{rel_path}/{name}")
   }
 }
 
-#[cfg(test)]
-mod tests {
-  use super::*;
+/// Split a directory's videos into disc-set groups and standalone videos.
+/// Only discs-kind libraries group; everything else browses flat.
+fn disc_set_groups(
+  kind: LibraryKind,
+  videos: Vec<VideoRecord>,
+) -> (BTreeMap<String, Vec<VideoRecord>>, Vec<VideoRecord>) {
+  videos.into_iter().fold(
+    (BTreeMap::new(), Vec::new()),
+    |(mut sets, mut singles), record| {
+      match (kind, record.disc_set.clone()) {
+        (LibraryKind::Discs, Some(set)) => {
+          sets.entry(set).or_default().push(record);
+        }
+        _ => singles.push(record),
+      }
+      (sets, singles)
+    },
+  )
+}
 
-  #[test]
-  fn native_type_passes_through_full_rfc6381_codecs() {
-    // Modern yt-dlp emits the exact profile/level string; it must survive
-    // verbatim so canPlayType matches the real file.
-    assert_eq!(
-      native_source_type("mp4", Some("avc1.640028"), Some("mp4a.40.2")),
-      Some(r#"video/mp4; codecs="avc1.640028, mp4a.40.2""#.to_string()),
-    );
-    assert_eq!(
-      native_source_type("mp4", Some("av01.0.05M.08"), Some("opus")),
-      Some(r#"video/mp4; codecs="av01.0.05M.08, opus""#.to_string()),
-    );
-    assert_eq!(
-      native_source_type("webm", Some("vp09.00.10.08"), Some("opus")),
-      Some(r#"video/webm; codecs="vp09.00.10.08, opus""#.to_string()),
-    );
-  }
-
-  #[test]
-  fn native_type_maps_bare_codec_names() {
-    assert_eq!(
-      native_source_type("webm", Some("vp9"), Some("opus")),
-      Some(r#"video/webm; codecs="vp9, opus""#.to_string()),
-    );
-    assert_eq!(
-      native_source_type("mp4", Some("h264"), Some("aac")),
-      Some(r#"video/mp4; codecs="avc1.42E01E, mp4a.40.2""#.to_string()),
-    );
-  }
-
-  #[test]
-  fn native_type_omits_unknown_audio_but_keeps_video() {
-    // An unrecognized audio codec should not sink the whole hint; the video
-    // codec alone still lets the browser decide on the container.
-    assert_eq!(
-      native_source_type("mp4", Some("avc1.640028"), Some("flac")),
-      Some(r#"video/mp4; codecs="avc1.640028""#.to_string()),
-    );
-  }
-
-  #[test]
-  fn native_type_absent_for_non_standard_container() {
-    // MKV/AVI/MOV have no MIME canPlayType accepts, so no native source is
-    // offered regardless of the codecs inside.
-    assert_eq!(
-      native_source_type("mkv", Some("avc1.640028"), Some("aac")),
-      None
-    );
-    assert_eq!(
-      native_source_type("mov", Some("avc1.640028"), Some("aac")),
-      None
-    );
-    assert_eq!(
-      native_source_type("avi", Some("avc1.640028"), Some("aac")),
-      None
-    );
-  }
-
-  #[test]
-  fn native_type_absent_when_video_codec_unknown_or_missing() {
-    // Without a nameable video codec the player must fall back to the compat
-    // copy rather than emit a bare container type.
-    assert_eq!(native_source_type("mp4", None, Some("aac")), None);
-    assert_eq!(native_source_type("mp4", Some("theora"), Some("aac")), None);
-  }
+/// Collapse one multi-title disc set into its entry.  The main title is the
+/// operator's override when present, else the largest file — the standing
+/// heuristic for "the actual movie" on a disc.
+fn disc_set_entry(
+  set_name: String,
+  records: Vec<VideoRecord>,
+  overrides: &HashMap<String, String>,
+  active: Option<&ActiveDerivation>,
+) -> Option<Entry> {
+  let main_rel = overrides
+    .get(&set_name)
+    .cloned()
+    .or_else(|| {
+      records
+        .iter()
+        .max_by_key(|record| record.size)
+        .map(|record| record.rel_path.clone())
+    })
+    .unwrap_or_default();
+  let titles: Vec<VideoItem> = records
+    .tap_mut(|records| {
+      records.sort_by_key(|r| (r.disc_title_index, r.rel_path.clone()));
+    })
+    .into_iter()
+    .map(|record| VideoItem::from_record(record, active))
+    .collect();
+  // A stale override may name a vanished file; the first title stands in.
+  // Grouping never yields an empty set, but `first` keeps this total (and
+  // the return `Option`al) rather than asserting that at a distance.
+  titles
+    .iter()
+    .find(|item| item.path == main_rel)
+    .or_else(|| titles.first())
+    .cloned()
+    .map(|main| {
+      Entry::DiscSet(Box::new(DiscSetEntry {
+        display_title: main
+          .title
+          .clone()
+          .unwrap_or_else(|| disc::display_title(&set_name)),
+        disc_set: set_name,
+        main,
+        titles,
+      }))
+    })
 }

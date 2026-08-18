@@ -1,6 +1,6 @@
 module Page.Player exposing (Model, Msg(..), init, mediaErrorMessage, update, view)
 
-import Api exposing (Entry(..))
+import Api exposing (VideoItem)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (on)
@@ -10,23 +10,13 @@ import Route
 
 
 type Model
-    = Loading String
+    = Loading Route.PlayerParams
     | Loaded PlayerState
     | Failed String
 
 
 type alias PlayerState =
-    { path : String
-    , title : String
-    , uploadDate : Maybe String
-    , durationSecs : Maybe Float
-    , compatPath : Maybe String
-    , nativeType : Maybe String
-    , description : Maybe String
-    , channel : Maybe String
-    , channelUrl : Maybe String
-    , webpageUrl : Maybe String
-    , viewCount : Maybe Int
+    { item : VideoItem
     , bufferFraction : Float
     , mediaError : Maybe MediaErrorCode
     }
@@ -43,29 +33,39 @@ type MediaErrorCode
 
 
 type Msg
-    = GotListing (Result Http.Error Api.DirListing)
+    = GotItem (Result Http.Error VideoItem)
     | VideoCanPlay
     | VideoProgress Float
     | MediaError MediaErrorCode
 
 
-init : String -> ( Model, Cmd Msg )
-init path =
-    ( Loading path
-    , Api.getBrowse (parentPath path) GotListing
+init : Route.PlayerParams -> ( Model, Cmd Msg )
+init params =
+    ( Loading params
+    , Api.getItem params.library params.path GotItem
     )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        GotListing (Ok listing) ->
-            ( Loaded (findVideo (loadingPath model) listing.entries)
+        GotItem (Ok item) ->
+            ( Loaded
+                { item = item
+                , bufferFraction = 0
+                , mediaError = Nothing
+                }
             , Cmd.none
             )
 
-        GotListing (Err _) ->
-            ( Loaded (fallbackState (loadingPath model))
+        GotItem (Err _) ->
+            -- The file may exist but not be indexed yet (mid-scan); fall back
+            -- to a bare playback attempt rather than a dead end.
+            ( Loaded
+                { item = fallbackItem model
+                , bufferFraction = 0
+                , mediaError = Nothing
+                }
             , Cmd.none
             )
 
@@ -94,61 +94,37 @@ update msg model =
                     ( model, Cmd.none )
 
 
-{-| Search the directory listing for the video matching the given path
-and convert it to a PlayerState. Falls back to a minimal state when
-the video is not found in the listing.
--}
-findVideo : String -> List Api.Entry -> PlayerState
-findVideo path entries =
-    entries
-        |> List.filterMap (matchVideo path)
-        |> List.head
-        |> Maybe.withDefault (fallbackState path)
+fallbackItem : Model -> VideoItem
+fallbackItem model =
+    let
+        ( library, path ) =
+            case model of
+                Loading params ->
+                    ( params.library, params.path )
 
-
-matchVideo : String -> Api.Entry -> Maybe PlayerState
-matchVideo path entry =
-    case entry of
-        Video v ->
-            if v.path == path then
-                Just
-                    { path = v.path
-                    , title = Maybe.withDefault v.name v.title
-                    , uploadDate = v.uploadDate
-                    , durationSecs = v.durationSecs
-                    , compatPath = v.compatPath
-                    , nativeType = v.nativeType
-                    , description = v.description
-                    , channel = v.channel
-                    , channelUrl = v.channelUrl
-                    , webpageUrl = v.webpageUrl
-                    , viewCount = v.viewCount
-                    , bufferFraction = 0
-                    , mediaError = Nothing
-                    }
-
-            else
-                Nothing
-
-        _ ->
-            Nothing
-
-
-fallbackState : String -> PlayerState
-fallbackState path =
-    { path = path
-    , title = path
-    , uploadDate = Nothing
+                _ ->
+                    ( "", "" )
+    in
+    { library = library
+    , path = path
+    , name = path
+    , title = Nothing
+    , titleSource = Nothing
     , durationSecs = Nothing
-    , compatPath = Nothing
-    , nativeType = Nothing
+    , uploadDate = Nothing
+    , year = Nothing
     , description = Nothing
     , channel = Nothing
     , channelUrl = Nothing
     , webpageUrl = Nothing
     , viewCount = Nothing
-    , bufferFraction = 0
-    , mediaError = Nothing
+    , genres = []
+    , thumbPath = Nothing
+    , compatPath = Nothing
+    , nativeType = Nothing
+    , derivation = { state = Api.Unknown, error = Nothing }
+    , discSet = Nothing
+    , discTitleIndex = Nothing
     }
 
 
@@ -160,11 +136,10 @@ view : Model -> Html Msg
 view model =
     case model of
         Loading _ ->
-            p [ style "padding" "1rem" ] [ text "Loading…" ]
+            p [ class "status-note" ] [ text "Loading…" ]
 
         Failed err ->
-            p [ style "padding" "1rem", style "color" "var(--color-error)" ]
-                [ text ("Error: " ++ err) ]
+            p [ class "error-note" ] [ text ("Error: " ++ err) ]
 
         Loaded state ->
             viewLoaded state
@@ -172,45 +147,96 @@ view model =
 
 viewLoaded : PlayerState -> Html Msg
 viewLoaded state =
-    div [ style "padding" "1rem" ]
-        ([ backLink state.path
-         , case state.mediaError of
-            Just code ->
-                viewMediaError state.path code
-
-            Nothing ->
-                viewPlayer state
-         , h2 [ style "margin-top" "0.75rem" ] [ text state.title ]
+    div [ class "page" ]
+        ([ backLink state.item
+         , viewMain state
+         , h2 [ class "player-title" ]
+            [ text (Maybe.withDefault state.item.name state.item.title) ]
          ]
-            ++ viewMetadata state
+            ++ viewMetadata state.item
         )
 
 
-backLink : String -> Html Msg
-backLink path =
+{-| The main panel: the player when playback stands a chance, or an honest
+status panel when it does not. A video with neither a typed native source
+nor a compat copy but with a conversion underway gets the "being prepared"
+panel instead of a doomed playback attempt.
+-}
+viewMain : PlayerState -> Html Msg
+viewMain state =
+    case state.mediaError of
+        Just code ->
+            viewMediaError state.item code
+
+        Nothing ->
+            if state.item.nativeType == Nothing && state.item.compatPath == Nothing then
+                case state.item.derivation.state of
+                    Api.Pending ->
+                        viewPreparing
+                            "A browser-compatible version is queued for conversion."
+                            state.item
+
+                    Api.Processing ->
+                        viewPreparing
+                            "A browser-compatible version is being prepared right now."
+                            state.item
+
+                    Api.Failed ->
+                        viewPreparing
+                            ("Converting this video failed"
+                                ++ (state.item.derivation.error
+                                        |> Maybe.map (\e -> ": " ++ e)
+                                        |> Maybe.withDefault "."
+                                   )
+                            )
+                            state.item
+
+                    _ ->
+                        viewPlayer state
+
+            else
+                viewPlayer state
+
+
+viewPreparing : String -> VideoItem -> Html Msg
+viewPreparing message item =
+    div [ class "player-panel" ]
+        [ p [] [ text message ]
+        , downloadLink item
+        ]
+
+
+backLink : VideoItem -> Html Msg
+backLink item =
     a
-        [ href (Route.toString (Route.Browse { path = parentPath path, query = "", page = 1 }))
-        , style "margin-bottom" "1rem"
-        , style "display" "inline-block"
+        [ href
+            (Route.toString
+                (Route.Browse
+                    { library = item.library
+                    , path = parentPath item.path
+                    , page = 1
+                    }
+                )
+            )
+        , class "player-back"
         ]
         [ text "← Back" ]
 
 
-viewMediaError : String -> MediaErrorCode -> Html Msg
-viewMediaError path code =
-    div
-        [ style "background" "var(--color-surface)"
-        , style "padding" "2rem"
-        , style "max-width" "960px"
-        , style "text-align" "center"
+downloadLink : VideoItem -> Html Msg
+downloadLink item =
+    a
+        [ href (Api.videoUrl item.library item.path)
+        , attribute "download" ""
         ]
-        [ p [ style "color" "var(--color-error)" ]
-            [ text (mediaErrorMessage code) ]
-        , a
-            [ href (Api.videoUrl path)
-            , attribute "download" ""
-            ]
-            [ text "Download to play in VLC or another media player" ]
+        [ text "Download to play in VLC or another media player" ]
+
+
+viewMediaError : VideoItem -> MediaErrorCode -> Html Msg
+viewMediaError item code =
+    div [ class "player-panel" ]
+        [ p [ class "error-text" ] [ text (mediaErrorMessage code) ]
+        , downloadLink item
         ]
 
 
@@ -218,7 +244,7 @@ viewPlayer : PlayerState -> Html Msg
 viewPlayer state =
     let
         ( extraAttrs, sources ) =
-            videoSources state
+            videoSources state.item
     in
     div []
         [ bufferBar state.bufferFraction
@@ -230,9 +256,7 @@ videoAttrs : List (Attribute Msg)
 videoAttrs =
     [ controls True
     , on "canplay" (D.succeed VideoCanPlay)
-    , style "width" "100%"
-    , style "max-width" "960px"
-    , style "display" "block"
+    , class "player-video"
     ]
 
 
@@ -249,13 +273,14 @@ the terminal fallback with a bare `video/mp4` type, which every browser
 accepts.
 
 -}
-videoSources :
-    PlayerState
-    -> ( List (Attribute Msg), List (Html Msg) )
-videoSources state =
+videoSources : VideoItem -> ( List (Attribute Msg), List (Html Msg) )
+videoSources item =
     let
         nativeUrl =
-            Api.videoUrl state.path
+            Api.videoUrl item.library item.path
+
+        compatUrl compat =
+            Api.videoUrl item.library compat
 
         -- Source elements do not expose target.error.code, so a source-level
         -- failure reports the fixed "not supported" code.
@@ -267,11 +292,11 @@ videoSources state =
         codedError =
             on "error" (D.map MediaError mediaErrorDecoder)
     in
-    case ( state.nativeType, state.compatPath ) of
+    case ( item.nativeType, item.compatPath ) of
         ( Just nt, Just cp ) ->
             ( []
             , [ source [ src nativeUrl, type_ nt ] []
-              , source [ src (Api.videoUrl cp), type_ "video/mp4", fixedError ] []
+              , source [ src (compatUrl cp), type_ "video/mp4", fixedError ] []
               ]
             )
 
@@ -285,7 +310,7 @@ videoSources state =
         ( Nothing, Just cp ) ->
             -- Native cannot be offered safely (non-standard container or
             -- unknown codecs); serve only the guaranteed-playable compat.
-            ( [ src (Api.videoUrl cp), codedError ], [] )
+            ( [ src (compatUrl cp), codedError ], [] )
 
         ( Nothing, Nothing ) ->
             -- Best effort with no hint: let the browser probe the native and
@@ -293,43 +318,46 @@ videoSources state =
             ( [ src nativeUrl, codedError ], [] )
 
 
+{-| Buffering progress as a semantic progress element; a fully buffered
+video needs no meter at all.
+-}
 bufferBar : Float -> Html msg
 bufferBar fraction =
     if fraction < 1 then
-        div
-            [ style "width" "100%"
-            , style "max-width" "960px"
-            , style "height" "4px"
-            , style "background" "var(--color-surface)"
-            , style "margin-bottom" "0.25rem"
+        progress
+            [ class "buffer-progress"
+            , attribute "max" "1"
+            , attribute "value" (String.fromFloat fraction)
             ]
-            [ div
-                [ style "height" "100%"
-                , style "width" (String.fromFloat (fraction * 100) ++ "%")
-                , style "background" "var(--color-link)"
-                , style "transition" "width 0.3s ease"
-                ]
-                []
-            ]
+            []
 
     else
         text ""
 
 
-viewMetadata : PlayerState -> List (Html Msg)
-viewMetadata state =
+viewMetadata : VideoItem -> List (Html Msg)
+viewMetadata item =
     List.filterMap identity
-        [ state.uploadDate
+        [ item.year
+            |> Maybe.map (\y -> p [] [ text ("Year: " ++ String.fromInt y) ])
+        , item.uploadDate
             |> Maybe.map (\d -> p [] [ text ("Uploaded: " ++ formatDate d) ])
-        , state.durationSecs
+        , item.durationSecs
             |> Maybe.map (\s -> p [] [ text ("Duration: " ++ formatDuration s) ])
-        , state.viewCount
+        , item.viewCount
             |> Maybe.map (\n -> p [] [ text ("Views: " ++ formatViewCount n) ])
-        , state.channel
-            |> Maybe.map (viewChannel state.channelUrl)
-        , state.webpageUrl
+        , (if List.isEmpty item.genres then
+            Nothing
+
+           else
+            Just (String.join ", " item.genres)
+          )
+            |> Maybe.map (\g -> p [] [ text ("Genres: " ++ g) ])
+        , item.channel
+            |> Maybe.map (viewChannel item.channelUrl)
+        , item.webpageUrl
             |> Maybe.map viewYoutubeLink
-        , state.description
+        , item.description
             |> Maybe.map viewDescription
         ]
 
@@ -358,17 +386,7 @@ viewYoutubeLink url =
 
 viewDescription : String -> Html msg
 viewDescription desc =
-    div
-        [ style "margin-top" "1rem"
-        , style "max-width" "960px"
-        , style "max-height" "14rem"
-        , style "overflow-y" "auto"
-        , style "font-size" "0.9rem"
-        , style "line-height" "1.6"
-        , style "white-space" "pre-wrap"
-        , style "word-break" "break-word"
-        ]
-        (renderDescription desc)
+    div [ class "description" ] (renderDescription desc)
 
 
 
@@ -383,16 +401,6 @@ parentPath path =
         |> List.drop 1
         |> List.reverse
         |> String.join "/"
-
-
-loadingPath : Model -> String
-loadingPath model =
-    case model of
-        Loading p ->
-            p
-
-        _ ->
-            ""
 
 
 {-| Strip trailing punctuation characters that are unlikely to be part of a
@@ -424,7 +432,7 @@ stripTrailingPunct s =
 
 
 {-| Render a description string, turning http/https tokens into clickable
-links. Newlines are preserved by the parent's white-space: pre-wrap style.
+links. Newlines are preserved by the description style's pre-wrap.
 -}
 renderDescription : String -> List (Html msg)
 renderDescription desc =
@@ -560,7 +568,7 @@ mediaErrorMessage code =
             "The video could not be decoded (codec error)."
 
         ErrSrcNotSupported ->
-            "This video format is not supported by your browser (AV1/WebM)."
+            "This video format is not supported by your browser."
 
         ErrUnknown n ->
             "Playback failed (error code " ++ String.fromInt n ++ ")."

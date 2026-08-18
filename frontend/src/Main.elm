@@ -5,7 +5,9 @@ import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Page.Browse as Browse
+import Page.Home as Home
 import Page.Player as Player
+import Page.Search as Search
 import Route exposing (Route(..))
 import Url exposing (Url)
 
@@ -17,7 +19,9 @@ port videoProgress : (Float -> msg) -> Sub msg
 
 
 type Page
-    = BrowsePage Browse.Model
+    = HomePage Home.Model
+    | BrowsePage Browse.Model
+    | SearchPage Search.Model
     | PlayerPage Player.Model
     | NotFoundPage
 
@@ -35,7 +39,9 @@ type alias Model =
 type Msg
     = UrlRequested Browser.UrlRequest
     | UrlChanged Url
+    | HomeMsg Home.Msg
     | BrowseMsg Browse.Msg
+    | SearchMsg Search.Msg
     | PlayerMsg Player.Msg
 
 
@@ -60,12 +66,20 @@ init _ url key =
 routeToPage : Nav.Key -> Route -> ( Page, Cmd Msg )
 routeToPage key route =
     case route of
+        Route.Home ->
+            Home.init key
+                |> Tuple.mapBoth HomePage (Cmd.map HomeMsg)
+
         Route.Browse params ->
             Browse.init key params
                 |> Tuple.mapBoth BrowsePage (Cmd.map BrowseMsg)
 
-        Route.Player path ->
-            Player.init path
+        Route.Search params ->
+            Search.init key params
+                |> Tuple.mapBoth SearchPage (Cmd.map SearchMsg)
+
+        Route.Player params ->
+            Player.init params
                 |> Tuple.mapBoth PlayerPage (Cmd.map PlayerMsg)
 
         Route.NotFound ->
@@ -86,10 +100,15 @@ update msg model =
                 Route.Browse params ->
                     case model.page of
                         BrowsePage subModel ->
-                            if Browse.currentPath subModel == params.path then
-                                -- Same directory: update query/page without re-fetching.
+                            if
+                                Browse.currentLocation subModel
+                                    == ( params.library, params.path )
+                            then
+                                -- Same directory: update the page number
+                                -- without re-fetching.
                                 Browse.updateParams params subModel
-                                    |> Tuple.mapFirst (\m -> { model | page = BrowsePage m })
+                                    |> Tuple.mapFirst
+                                        (\m -> { model | page = BrowsePage m })
                                     |> Tuple.mapSecond (Cmd.map BrowseMsg)
 
                             else
@@ -108,6 +127,17 @@ update msg model =
                     routeToPage model.key route
                         |> Tuple.mapFirst (\page -> { model | page = page })
 
+        HomeMsg subMsg ->
+            case model.page of
+                HomePage subModel ->
+                    Home.update subMsg subModel
+                        |> Tuple.mapBoth
+                            (\m -> { model | page = HomePage m })
+                            (Cmd.map HomeMsg)
+
+                _ ->
+                    ( model, Cmd.none )
+
         BrowseMsg subMsg ->
             case model.page of
                 BrowsePage subModel ->
@@ -115,6 +145,17 @@ update msg model =
                         |> Tuple.mapBoth
                             (\m -> { model | page = BrowsePage m })
                             (Cmd.map BrowseMsg)
+
+                _ ->
+                    ( model, Cmd.none )
+
+        SearchMsg subMsg ->
+            case model.page of
+                SearchPage subModel ->
+                    Search.update subMsg subModel
+                        |> Tuple.mapBoth
+                            (\m -> { model | page = SearchPage m })
+                            (Cmd.map SearchMsg)
 
                 _ ->
                     ( model, Cmd.none )
@@ -151,16 +192,22 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Loku"
     , body =
-        [ div [ style "max-width" "1200px", style "margin" "0 auto" ]
+        [ div [ class "app-shell" ]
             [ case model.page of
+                HomePage subModel ->
+                    Html.map HomeMsg (Home.view subModel)
+
                 BrowsePage subModel ->
                     Html.map BrowseMsg (Browse.view subModel)
+
+                SearchPage subModel ->
+                    Html.map SearchMsg (Search.view subModel)
 
                 PlayerPage subModel ->
                     Html.map PlayerMsg (Player.view subModel)
 
                 NotFoundPage ->
-                    p [ style "padding" "2rem" ] [ text "Page not found." ]
+                    p [ class "not-found" ] [ text "Page not found." ]
             ]
         ]
     }
