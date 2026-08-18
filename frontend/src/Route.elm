@@ -1,26 +1,50 @@
-module Route exposing (BrowseParams, Route(..), parse, toString)
+module Route exposing
+    ( BrowseParams
+    , PlayerParams
+    , Route(..)
+    , SearchParams
+    , parse
+    , toString
+    )
 
 import Url exposing (Url)
 
 
 type alias BrowseParams =
-    { path : String
-    , query : String
+    { library : String
+    , path : String
     , page : Int
     }
 
 
+type alias SearchParams =
+    { query : String
+    , library : Maybe String
+    , page : Int
+    }
+
+
+type alias PlayerParams =
+    { library : String
+    , path : String
+    }
+
+
 type Route
-    = Browse BrowseParams
-    | Player String
+    = Home
+    | Browse BrowseParams
+    | Search SearchParams
+    | Player PlayerParams
     | NotFound
 
 
 {-| Derive a Route from a URL.
 
-    /browse/          → Browse { path = "", query = "", page = 1 }
-    /browse/My%20Show → Browse { path = "My Show", query = "", page = 1 }
-    /player/foo/bar   → Player "foo/bar"
+    /                        → Home
+    /browse/discs            → Browse { library = "discs", path = "" }
+    /browse/discs/Movies     → Browse { library = "discs", path = "Movies" }
+    /search?q=matrix         → Search { query = "matrix" }
+    /player/discs/foo.mkv    → Player { library = "discs", path = "foo.mkv" }
 
 -}
 parse : Url -> Route
@@ -29,21 +53,40 @@ parse url =
         qp =
             parseQueryParams url.query
     in
-    if String.startsWith "/browse/" url.path then
-        Browse
-            { path = String.dropLeft 8 url.path |> percentDecode
-            , query = qp.query
-            , page = qp.page
-            }
+    if url.path == "/" || url.path == "" then
+        Home
 
-    else if url.path == "/browse" then
-        Browse { path = "", query = qp.query, page = qp.page }
+    else if String.startsWith "/browse/" url.path then
+        let
+            ( library, path ) =
+                splitFirstSegment (String.dropLeft 8 url.path)
+        in
+        if String.isEmpty library then
+            Home
 
-    else if url.path == "/" || url.path == "" then
-        Browse { path = "", query = "", page = 1 }
+        else
+            Browse
+                { library = percentDecode library
+                , path = percentDecode path
+                , page = qp.page
+                }
+
+    else if String.startsWith "/search" url.path then
+        Search { query = qp.query, library = qp.library, page = qp.page }
 
     else if String.startsWith "/player/" url.path then
-        Player (String.dropLeft 8 url.path |> percentDecode)
+        let
+            ( library, path ) =
+                splitFirstSegment (String.dropLeft 8 url.path)
+        in
+        if String.isEmpty library || String.isEmpty path then
+            NotFound
+
+        else
+            Player
+                { library = percentDecode library
+                , path = percentDecode path
+                }
 
     else
         NotFound
@@ -52,41 +95,62 @@ parse url =
 toString : Route -> String
 toString route =
     case route of
-        Browse { path, query, page } ->
+        Home ->
+            "/"
+
+        Browse { library, path, page } ->
             let
                 base =
-                    if String.isEmpty path then
-                        "/browse/"
-
-                    else
-                        "/browse/" ++ encodePath path
-
-                qp =
-                    (if String.isEmpty query then
-                        []
-
-                     else
-                        [ "q=" ++ Url.percentEncode query ]
-                    )
-                        ++ (if page <= 1 then
-                                []
+                    "/browse/"
+                        ++ Url.percentEncode library
+                        ++ (if String.isEmpty path then
+                                ""
 
                             else
-                                [ "page=" ++ String.fromInt page ]
+                                "/" ++ encodePath path
                            )
             in
-            case qp of
-                [] ->
-                    base
+            if page <= 1 then
+                base
 
-                _ ->
-                    base ++ "?" ++ String.join "&" qp
+            else
+                base ++ "?page=" ++ String.fromInt page
 
-        Player path ->
-            "/player/" ++ encodePath path
+        Search { query, library, page } ->
+            "/search?q="
+                ++ Url.percentEncode query
+                ++ (case library of
+                        Just lib ->
+                            "&library=" ++ Url.percentEncode lib
+
+                        Nothing ->
+                            ""
+                   )
+                ++ (if page <= 1 then
+                        ""
+
+                    else
+                        "&page=" ++ String.fromInt page
+                   )
+
+        Player { library, path } ->
+            "/player/" ++ Url.percentEncode library ++ "/" ++ encodePath path
 
         NotFound ->
             "/"
+
+
+{-| Split off the first path segment (before any decoding, so encoded
+slashes inside a segment stay put).
+-}
+splitFirstSegment : String -> ( String, String )
+splitFirstSegment s =
+    case String.split "/" s of
+        first :: rest ->
+            ( first, String.join "/" rest )
+
+        [] ->
+            ( "", "" )
 
 
 percentDecode : String -> String
@@ -104,11 +168,13 @@ encodePath path =
         |> String.join "/"
 
 
-parseQueryParams : Maybe String -> { query : String, page : Int }
+parseQueryParams :
+    Maybe String
+    -> { query : String, library : Maybe String, page : Int }
 parseQueryParams maybeQs =
     case maybeQs of
         Nothing ->
-            { query = "", page = 1 }
+            { query = "", library = Nothing, page = 1 }
 
         Just qs ->
             let
@@ -132,10 +198,16 @@ parseQueryParams maybeQs =
                 q =
                     get "q" |> Maybe.map percentDecode |> Maybe.withDefault ""
 
+                lib =
+                    get "library" |> Maybe.map percentDecode
+
                 p =
-                    get "page" |> Maybe.andThen String.toInt |> Maybe.withDefault 1 |> max 1
+                    get "page"
+                        |> Maybe.andThen String.toInt
+                        |> Maybe.withDefault 1
+                        |> max 1
             in
-            { query = q, page = p }
+            { query = q, library = lib, page = p }
 
 
 splitKeyValue : String -> Maybe ( String, String )

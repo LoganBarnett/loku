@@ -13,6 +13,21 @@
       --color-link:        #0055cc;
       --color-error:       #cc2200;
       --color-placeholder: #cccccc;
+      --width-card:        200px;
+      --height-card:      112px;
+      --width-player:      960px;
+      --pad-page:          1rem;
+      --pad-listing:       0.5rem 1rem;
+      --pad-panel:         2rem;
+      --pad-page-item:     0.3rem 0.6rem;
+      --margin-page-item:  0 0.1rem;
+      --margin-top-tight:  0.25rem;
+      --margin-top-loose:  0.5rem;
+      --font-size-control: 1rem;
+      --font-size-detail:  0.9rem;
+      --font-size-caption: 0.85rem;
+      --font-size-fine:    0.8rem;
+      --opacity-muted:     0.8;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -27,6 +42,62 @@
     body { margin: 0; font-family: sans-serif; background: var(--color-bg); color: var(--color-text); }
     a { color: var(--color-link); text-decoration: none; }
     a:hover { text-decoration: underline; }
+
+    /* Layout */
+    .app-shell { max-width: 1200px; margin: 0 auto; }
+    .page { padding: var(--pad-page); }
+    .status-note { padding: var(--pad-page); }
+    .error-note { padding: var(--pad-page); color: var(--color-error); }
+    .error-text { color: var(--color-error); }
+    .not-found { padding: var(--pad-panel); }
+    .crumb-bar { padding: 0.75rem 1rem; background: var(--color-surface); }
+    .listing { padding: var(--pad-listing); }
+    .dir-entry { padding: 0.5rem 0; }
+
+    /* Video cards */
+    .video-card { display: inline-block; margin: 0.5rem; vertical-align: top; }
+    .card-thumb { width: var(--width-card); height: var(--height-card); object-fit: cover; display: block; }
+    .card-thumb-placeholder { width: var(--width-card); height: var(--height-card); background: var(--color-placeholder); display: flex; align-items: center; justify-content: center; }
+    .card-title { max-width: var(--width-card); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-caption); margin-top: var(--margin-top-tight); }
+    .card-badge { font-size: 0.75rem; max-width: var(--width-card); opacity: var(--opacity-muted); }
+
+    /* Search */
+    .search-form { display: flex; gap: 0.5rem; }
+    .search-form-home { margin-bottom: 1.5rem; max-width: 640px; }
+    .search-form-bar { padding: var(--pad-listing); }
+    .search-form-header { margin-top: var(--margin-top-loose); }
+    .search-input { flex: 1; padding: 0.4rem 0.6rem; font-size: var(--font-size-control); border: 1px solid var(--color-surface); background: var(--color-bg); color: var(--color-text); border-radius: 4px; }
+    .search-button { padding: 0.4rem 0.8rem; font-size: var(--font-size-control); cursor: pointer; }
+    .result-summary { opacity: var(--opacity-muted); font-size: var(--font-size-detail); }
+
+    /* Home library cards */
+    .library-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .library-card { display: block; padding: 1.5rem 2rem; background: var(--color-surface); border-radius: 8px; min-width: 180px; }
+    .library-card-icon { font-size: 2rem; }
+    .library-card-name { font-size: 1.1rem; font-weight: bold; margin-top: var(--margin-top-loose); }
+    .library-card-kind { font-size: var(--font-size-caption); opacity: var(--opacity-muted); }
+
+    /* Disc sets */
+    .disc-set-body { max-width: var(--width-card); }
+    .disc-set-toggle { font-size: var(--font-size-fine); cursor: pointer; margin-top: var(--margin-top-tight); }
+    .disc-set-titles { margin-top: var(--margin-top-tight); }
+    .disc-title-row { font-size: var(--font-size-fine); padding: 0.15rem 0; display: flex; gap: 0.4rem; align-items: center; }
+    .disc-title-link { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .disc-main-button { font-size: 0.7rem; cursor: pointer; }
+
+    /* Pagination */
+    .pagination { padding: var(--pad-page); text-align: center; }
+    .page-gap { padding: 0.3rem 0.4rem; display: inline-block; }
+    .page-current { padding: var(--pad-page-item); margin: var(--margin-page-item); font-weight: bold; display: inline-block; }
+    .page-button { padding: var(--pad-page-item); margin: var(--margin-page-item); cursor: pointer; }
+
+    /* Player */
+    .player-back { margin-bottom: 1rem; display: inline-block; }
+    .player-panel { background: var(--color-surface); padding: var(--pad-panel); max-width: var(--width-player); text-align: center; }
+    .player-video { width: 100%; max-width: var(--width-player); display: block; }
+    .player-title { margin-top: 0.75rem; }
+    .buffer-progress { width: 100%; max-width: var(--width-player); height: 4px; display: block; margin-bottom: 0.25rem; accent-color: var(--color-link); }
+    .description { margin-top: var(--pad-page); max-width: var(--width-player); max-height: 14rem; overflow-y: auto; font-size: var(--font-size-detail); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body>

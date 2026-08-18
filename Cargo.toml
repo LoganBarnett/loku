@@ -69,6 +69,38 @@ schemars = "0.9"
 # ::openidconnect::core::CoreClient.
 openidconnect = { version = "3", features = ["reqwest"] }
 
+# Liberal parsing of Kodi .nfo sidecars (XML despite the extension); the
+# serialize feature enables the serde deserializer.
+quick-xml = { version = "0.41", features = ["serialize"] }
+
+# Embedded SQLite for the media index.  The bundled feature compiles SQLite
+# (FTS5 included) via cc, so no system or Nix sqlite is needed.  The version
+# tracks tokio-rusqlite's rusqlite requirement (^0.37) — bump the two
+# together or the tree ends up with two incompatible rusqlite versions.
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# Async access to rusqlite via a dedicated connection thread; replaces
+# hand-rolled spawn_blocking-plus-Mutex plumbing around the index.
+tokio-rusqlite = "0.7"
+
+# Recursive library walking for the index scanner, with symlink-loop safety.
+walkdir = "2"
+
+# Filesystem events driving incremental index updates, so new rips and
+# downloads appear without a restart or rescan.  On Linux (the deployment
+# target) this is inotify regardless of features; on macOS the kqueue
+# backend is selected because the default FSEvents backend delivers no
+# events to plain CLI processes in this project's dev environment.
+notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
+
+# Dyn-safe async trait for the ffmpeg runner, so tests inject a fake without
+# genericizing the app state and task plumbing.
+async-trait = "0.1"
+
+# Stream combinators (for_each / fold / try_fold) expressing sequential async
+# iteration, keeping per-item awaits out of imperative for loops.
+futures-util = "0.3"
+
 # Temp directories for integration tests (library and config fixtures).
 tempfile = "3"
 

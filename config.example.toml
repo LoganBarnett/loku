@@ -12,8 +12,30 @@ log_format = "text"  # Options: text, json
 # listen = "/run/loku/loku.sock"  # Unix domain socket path
 # listen = "sd-listen"            # Inherit socket from systemd (socket activation)
 
-# Root directory of the video library (required; or pass --library).
-# library = "/media/videos"
+# Library roots (at least one required).  Each entry names a directory tree
+# holding one dataset kind: "downloads" for yt-dlp style downloads with
+# info.json sidecars, "discs" for MakeMKV disc rips.  The name becomes the
+# /files/{name} URL segment, so it must be lowercase ASCII letters, digits,
+# '_', or '-'.
+#
+# [[library]]
+# name = "downloads"
+# path = "/media/videos"
+# kind = "downloads"
+#
+# [[library]]
+# name = "discs"
+# path = "/media/rips"
+# kind = "discs"
+#
+# Alternatively, --library PATH on the command line configures a single
+# downloads-kind library (developer convenience; overrides [[library]]
+# entries).
+
+# Directory for persistent server state (the media index database).
+# Defaults to systemd's STATE_DIRECTORY when present, else
+# $XDG_STATE_HOME/loku, else ~/.local/state/loku.
+# state_dir = "/var/lib/loku-server"
 
 # Base URL of the service.  Only needed for OIDC deployments; defaults to a
 # local address otherwise.

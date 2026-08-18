@@ -6,8 +6,13 @@ use rust_template_foundation::config::{
 use rust_template_foundation::server::runner::{ServerApp, ServerRunConfig};
 use rust_template_foundation::{CliApp, MergeConfig};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use tokio_listener::ListenerAddress;
+
+use crate::library::{
+  valid_library_name, Library, LibraryFileEntry, LibraryKind,
+};
 
 /// Loku-specific and OIDC CLI arguments, flattened into the generated
 /// `CliRaw`.
@@ -18,9 +23,15 @@ use tokio_listener::ListenerAddress;
 /// Names follow the same `<app>_<flag>` convention the macro uses elsewhere.
 #[derive(Debug, clap::Args)]
 pub struct ExtraCliFields {
-  /// Root directory of the video library.
+  /// Root directory of a single downloads library.  Developer sugar for a
+  /// one-library configuration; multi-library setups use `[[library]]`
+  /// entries in the config file, and this flag overrides them entirely.
   #[arg(long = "library", env = "loku_library")]
   pub library: Option<PathBuf>,
+
+  /// Directory for persistent server state (the media index database).
+  #[arg(long = "state-dir", env = "loku_state_dir")]
+  pub state_dir: Option<PathBuf>,
 
   /// OIDC issuer URL
   /// (e.g. https://sso.example.com/application/o/loku).
@@ -40,7 +51,9 @@ pub struct ExtraCliFields {
 /// `ConfigFileRaw`.
 #[derive(Debug, Deserialize, Default)]
 pub struct ExtraFileFields {
-  pub library: Option<PathBuf>,
+  /// `[[library]]` entries: named roots with a dataset kind.
+  pub library: Option<Vec<LibraryFileEntry>>,
+  pub state_dir: Option<PathBuf>,
   pub oidc_issuer: Option<String>,
   pub oidc_client_id: Option<String>,
   pub oidc_client_secret_file: Option<PathBuf>,
@@ -74,21 +87,31 @@ pub struct Config {
   pub base_url: String,
   #[merge_config(skip)]
   pub oidc: Option<OidcConfig>,
-  /// Root directory of the video library.  Resolved (and checked for
-  /// existence) in `resolve_library_path` — the `MergeConfig` macro has no
-  /// per-field validation hook, so a required-and-must-exist field rides the
+  /// The configured library roots, at least one.  Resolved (and checked for
+  /// existence) in `resolve_libraries` — the `MergeConfig` macro has no
+  /// per-field validation hook, so required-and-must-exist fields ride the
   /// `skip` escape hatch.  See tasks.org "Cross-repo".
   #[merge_config(skip)]
-  pub library_path: PathBuf,
+  pub libraries: Vec<Library>,
+  /// Directory for persistent server state (the media index database).  Not
+  /// required to exist yet; it is created when the index opens.
+  #[merge_config(skip)]
+  pub state_dir: PathBuf,
 }
 
 impl std::fmt::Display for Config {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(
       f,
-      "Config(listen={}, library={})",
+      "Config(listen={}, libraries=[{}], state_dir={})",
       self.listen_address,
-      self.library_path.display()
+      self
+        .libraries
+        .iter()
+        .map(|l| format!("{}:{}", l.name, l.path.display()))
+        .collect::<Vec<_>>()
+        .join(", "),
+      self.state_dir.display()
     )
   }
 }
@@ -105,31 +128,84 @@ impl ServerApp for Config {
 }
 
 impl Config {
-  fn resolve_library_path(
+  fn resolve_libraries(
+    cli: &CliRaw,
+    file: &ConfigFileRaw,
+  ) -> Result<Vec<Library>, ConfigError> {
+    // The CLI flag is single-root developer sugar: it wins outright
+    // (matching the CLI-over-file precedence used elsewhere) and implies one
+    // downloads-kind library under a fixed name.
+    let candidates = cli.extra.library.clone().map_or_else(
+      || file.extra.library.clone().unwrap_or_default(),
+      |path| {
+        vec![LibraryFileEntry {
+          name: "downloads".to_string(),
+          path,
+          kind: LibraryKind::Downloads,
+        }]
+      },
+    );
+
+    if candidates.is_empty() {
+      return Err(ConfigError::Validation(
+        "at least one library is required: pass --library or define \
+         [[library]] entries in the config file"
+          .to_string(),
+      ));
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+      .into_iter()
+      .map(|entry| {
+        if !valid_library_name(&entry.name) {
+          return Err(ConfigError::Validation(format!(
+            "library name '{}' is invalid: names become URL path segments \
+             and must be non-empty lowercase ASCII letters, digits, '_', \
+             or '-'",
+            entry.name
+          )));
+        }
+        if !seen.insert(entry.name.clone()) {
+          return Err(ConfigError::Validation(format!(
+            "library name '{}' is defined more than once",
+            entry.name
+          )));
+        }
+        if !entry.path.exists() {
+          return Err(ConfigError::Validation(format!(
+            "library path for '{}' does not exist: {}",
+            entry.name,
+            entry.path.display()
+          )));
+        }
+        Ok(Library {
+          name: entry.name,
+          path: entry.path,
+          kind: entry.kind,
+        })
+      })
+      .collect()
+  }
+
+  fn resolve_state_dir(
     cli: &CliRaw,
     file: &ConfigFileRaw,
   ) -> Result<PathBuf, ConfigError> {
-    let library_path = cli
+    cli
       .extra
-      .library
+      .state_dir
       .clone()
-      .or_else(|| file.extra.library.clone())
+      .or_else(|| file.extra.state_dir.clone())
+      .or_else(state_dir_from_env)
       .ok_or_else(|| {
         ConfigError::Validation(
-          "library is required: pass --library or set `library` in the \
-           config file"
+          "state_dir could not be determined: pass --state-dir, set \
+           `state_dir` in the config file, or run with STATE_DIRECTORY, \
+           XDG_STATE_HOME, or HOME set"
             .to_string(),
         )
-      })?;
-
-    if !library_path.exists() {
-      return Err(ConfigError::Validation(format!(
-        "library path does not exist: {}",
-        library_path.display()
-      )));
-    }
-
-    Ok(library_path)
+      })
   }
 
   fn resolve_oidc(
@@ -180,29 +256,57 @@ impl Config {
         }))
       }
       _ => {
-        let mut present = Vec::new();
-        let mut missing = Vec::new();
-        for (name, val) in [
+        let (present, missing): (Vec<_>, Vec<_>) = [
           ("oidc_issuer", oidc_issuer.is_some()),
           ("oidc_client_id", oidc_client_id.is_some()),
           (
             "oidc_client_secret_file",
             oidc_secret_file.is_some() || credential_secret_path().is_some(),
           ),
-        ] {
-          if val {
-            present.push(name);
-          } else {
-            missing.push(name);
-          }
-        }
+        ]
+        .into_iter()
+        .partition(|(_, set)| *set);
         Err(ConfigError::Validation(format!(
           "partial OIDC configuration: set all three fields or none. \
            present: [{}], missing: [{}]",
-          present.join(", "),
-          missing.join(", ")
+          field_names(present),
+          field_names(missing)
         )))
       }
     }
   }
+}
+
+/// The field names from a (name, set) list, comma-joined for an error
+/// message.
+fn field_names(fields: Vec<(&str, bool)>) -> String {
+  fields
+    .into_iter()
+    .map(|(name, _)| name)
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+/// Environment-derived state-directory fallbacks, in precedence order:
+/// systemd's `STATE_DIRECTORY` (colon-separated when the unit declares
+/// several; the first is ours), then the XDG state home, then the
+/// conventional `~/.local/state` location.  `var_os` is used because an
+/// absent variable is an expected case here, not an error to handle.
+fn state_dir_from_env() -> Option<PathBuf> {
+  std::env::var_os("STATE_DIRECTORY")
+    .as_deref()
+    .and_then(std::ffi::OsStr::to_str)
+    .and_then(|v| v.split(':').next())
+    .filter(|v| !v.is_empty())
+    .map(PathBuf::from)
+    .or_else(|| {
+      std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(|v| PathBuf::from(v).join("loku"))
+    })
+    .or_else(|| {
+      std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .map(|v| PathBuf::from(v).join(".local/state/loku"))
+    })
 }
