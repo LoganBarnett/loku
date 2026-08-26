@@ -67,7 +67,7 @@ schemars = "0.9"
 # OIDC types.  Foundation performs discovery, but OidcConfig is threaded through
 # the server config and the impl_server_state! macro references
 # ::openidconnect::core::CoreClient.
-openidconnect = { version = "3", features = ["reqwest"] }
+openidconnect = { version = "4", features = ["reqwest"] }
 
 # Temp directories for integration tests (library and config fixtures).
 tempfile = "3"
