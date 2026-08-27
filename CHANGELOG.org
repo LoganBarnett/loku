@@ -3,6 +3,11 @@
 
 * Upcoming
 ** Added
+** Fixes
+** Breaking
+** Maintenance
+* v0.27.0
+** Added
 1. Loku now serves multiple named libraries, each typed as =downloads= (yt-dlp)
    or =discs= (MakeMKV rips).  Define them with =[[library]]= entries in the config
    file or the NixOS module's =libraries= option; single-library setups can keep
@@ -19,7 +24,6 @@
    Kodi) should exclude =*.compat.mp4= from their scans.
 5. New videos, fresh rips, and deletions now show up on their own — no restart
    or manual rescan.  No action needed.
-** Fixes
 ** Breaking
 1. Library names are now part of every path: media files serve under
    =/files/{library}/…=, app pages under =/browse/{library}/…= (old bookmarks
@@ -33,7 +37,6 @@
    write access to the library trees.
 3. Directories with no videos anywhere beneath them no longer appear in browse
    listings.  No action needed for typical media trees.
-** Maintenance
 * v0.26.0
 ** Maintenance
 1. build(deps): Bump rust-template-foundation from `4b5d0a2` to `7429f55`
