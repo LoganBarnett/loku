@@ -6,6 +6,8 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+* v0.28.0
+** Maintenance
 1. build(deps): Bump futures-util from 0.3.31 to 0.3.34
    (https://github.com/LoganBarnett/loku/pull/35)
 * v0.27.0
