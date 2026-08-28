@@ -6,6 +6,8 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+1. build(deps): Bump futures-util from 0.3.31 to 0.3.34
+   (https://github.com/LoganBarnett/loku/pull/35)
 * v0.27.0
 ** Added
 1. Loku now serves multiple named libraries, each typed as =downloads= (yt-dlp)
