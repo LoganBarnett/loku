@@ -6,6 +6,8 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+1. build(deps): Bump async-trait from 0.1.91 to 0.1.92
+   (https://github.com/LoganBarnett/loku/pull/34)
 * v0.28.0
 ** Maintenance
 1. build(deps): Bump futures-util from 0.3.31 to 0.3.34
