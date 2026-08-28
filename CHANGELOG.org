@@ -6,6 +6,8 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+1. build(deps): Bump quick-xml from 0.41.0 to 0.42.0
+   (https://github.com/LoganBarnett/loku/pull/33)
 * v0.27.0
 ** Added
 1. Loku now serves multiple named libraries, each typed as =downloads= (yt-dlp)
