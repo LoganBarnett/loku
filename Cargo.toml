@@ -71,7 +71,7 @@ openidconnect = { version = "3", features = ["reqwest"] }
 
 # Liberal parsing of Kodi .nfo sidecars (XML despite the extension); the
 # serialize feature enables the serde deserializer.
-quick-xml = { version = "0.41", features = ["serialize"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
 
 # Embedded SQLite for the media index.  The bundled feature compiles SQLite
 # (FTS5 included) via cc, so no system or Nix sqlite is needed.  The version
