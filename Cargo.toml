@@ -62,7 +62,7 @@ prometheus = "0.13"
 # OpenAPI: aide builds the documented ApiRouter for the browse route; schemars
 # derives the request/response schemas.
 aide = { version = "0.15", features = ["axum", "axum-json", "axum-query", "scalar", "macros"] }
-schemars = "0.9"
+schemars = "1.2"
 
 # OIDC types.  Foundation performs discovery, but OidcConfig is threaded through
 # the server config and the impl_server_state! macro references
