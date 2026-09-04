@@ -8,6 +8,8 @@
 ** Maintenance
 1. build(deps): Bump tower-http from 0.7.0 to 0.7.1
    (https://github.com/LoganBarnett/loku/pull/40)
+2. build(deps): Bump tempfile from 3.25.0 to 3.27.0
+   (https://github.com/LoganBarnett/loku/pull/41)
 * v0.33.0
 ** Maintenance
 1. build(deps): Bump rust-template-foundation from `e459313` to `4ce078a`
