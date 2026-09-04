@@ -6,6 +6,7 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+* v0.35.0
 * v0.34.0
 ** Maintenance
 1. build(deps): Bump tower-http from 0.7.0 to 0.7.1
