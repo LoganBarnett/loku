@@ -1764,7 +1764,7 @@ dependencies = [
  "rusqlite",
  "rust-embed",
  "rust-template-foundation",
- "schemars 0.9.0",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "tap",
