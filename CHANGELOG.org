@@ -6,6 +6,8 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+1. build(deps): Bump rust-template-foundation from `e0b333d` to `2adb449`
+   (https://github.com/LoganBarnett/loku/pull/49)
 * v0.40.0
 ** Maintenance
 1. build(deps): Bump rust-template-foundation from `7bc4142` to `e0b333d`
