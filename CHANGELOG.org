@@ -6,6 +6,8 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+1. build(deps): Bump thiserror from 2.0.20 to 2.0.21
+   (https://github.com/LoganBarnett/loku/pull/54)
 * v0.44.0
 ** Maintenance
 1. build(deps): Bump rust-template-foundation from `3c3a111` to `147370b`
