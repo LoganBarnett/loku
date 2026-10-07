@@ -54,6 +54,10 @@ notify = { workspace = true }
 async-trait = { workspace = true }
 # Stream combinators for sequential async iteration instead of for loops.
 futures-util = { workspace = true }
+# Hashes the disc-id fallback and the structural disc fingerprint.
+sha2 = { workspace = true }
+# HTTP client for the TMDB identity resolver.
+reqwest = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

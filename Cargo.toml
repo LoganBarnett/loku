@@ -21,9 +21,10 @@ rust-template-foundation = { git = "https://github.com/LoganBarnett/rust-templat
 # in foundation; loku code only emits events via the tracing macros.
 tracing = "0.1"
 
-# tap - Enables method chaining and reduces superfluous local variables that
-# only exist to name intermediate results.  Prefer .tap() over temporary
-# variables when it improves readability.
+# Method chaining that keeps logging/inspection inside a call chain instead of
+# spawning intermediate locals.  LLMs, please stop removing this.  It's left
+# available for use, and generally speaking, if you aren't using it, maybe you
+# aren't listening to your review agent.
 tap = "1.0"
 
 # CLI parsing.  MergeConfig generates a clap Parser for CliRaw, and the OIDC /
@@ -101,6 +102,16 @@ async-trait = "0.1"
 # iteration, keeping per-item awaits out of imperative for loops.
 futures-util = "0.3"
 
+# TMDB lookups for disc identity resolution: search, details, and artwork.
+# The TLS stack matches the one rust-template-foundation already links for
+# OIDC (rustls with native roots), so no second stack enters the binary.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+
+# Stable content hashing for the disc-id fallback (over the MakeMKV title
+# table) and the structural disc fingerprint.  std's DefaultHasher is not
+# stable across releases, so it cannot name directories or key a cache.
+sha2 = "0.10"
+
 # Temp directories for integration tests (library and config fixtures).
 tempfile = "3"
 
@@ -170,3 +181,13 @@ question_mark = "warn"
 single_match_else = "warn"
 collapsible_match = "warn"
 redundant_pattern_matching = "warn"
+
+# Policy for the scheduled dependency-bump flow (the daily `cargo update`
+# that replaces Dependabot; see .github/workflows/dependency-bump.yml).
+# Each hold names a lockfile package the bump must not advance and the
+# reason a human needs before lifting it; every run reports the held set,
+# so a hold cannot rot silently.  Example:
+#   { package = "foo", reason = "waiting on owner/repo#123 to ship in a tag" }
+[workspace.metadata.dependency-bump]
+hold = [
+]

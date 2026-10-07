@@ -12,8 +12,12 @@
 //!
 //! Callers are expected to read the file as lossy UTF-8 before handing it
 //! here, which is how mixed or broken encodings are tolerated.
+//!
+//! The same types serialize back out through `movie_to_xml` and
+//! `tvshow_to_xml`, so the NFOs Loku writes are exactly the canonical subset
+//! its reader models: the writer and the reader share one schema.
 
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use thiserror::Error;
@@ -43,99 +47,140 @@ impl Nfo {
 }
 
 /// `<movie>` document contents.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct MovieNfo {
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub title: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub originaltitle: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub sorttitle: Option<String>,
-  #[serde(deserialize_with = "forgiving_number")]
+  #[serde(
+    deserialize_with = "forgiving_number",
+    skip_serializing_if = "Option::is_none"
+  )]
   pub year: Option<i32>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub premiered: Option<String>,
   /// Runtime in minutes, per Kodi convention.
-  #[serde(deserialize_with = "forgiving_number")]
+  #[serde(
+    deserialize_with = "forgiving_number",
+    skip_serializing_if = "Option::is_none"
+  )]
   pub runtime: Option<u32>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub plot: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub outline: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub tagline: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub mpaa: Option<String>,
-  #[serde(rename = "genre")]
+  #[serde(rename = "genre", skip_serializing_if = "Vec::is_empty")]
   pub genres: Vec<String>,
-  #[serde(rename = "studio")]
+  #[serde(rename = "studio", skip_serializing_if = "Vec::is_empty")]
   pub studios: Vec<String>,
-  #[serde(rename = "country")]
+  #[serde(rename = "country", skip_serializing_if = "Vec::is_empty")]
   pub countries: Vec<String>,
-  #[serde(rename = "director")]
+  #[serde(rename = "director", skip_serializing_if = "Vec::is_empty")]
   pub directors: Vec<String>,
-  #[serde(rename = "actor")]
+  #[serde(rename = "actor", skip_serializing_if = "Vec::is_empty")]
   pub actors: Vec<Actor>,
-  #[serde(rename = "uniqueid")]
+  #[serde(rename = "uniqueid", skip_serializing_if = "Vec::is_empty")]
   pub unique_ids: Vec<UniqueId>,
 }
 
 /// `<episodedetails>` document contents.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct EpisodeNfo {
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub title: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub showtitle: Option<String>,
-  #[serde(deserialize_with = "forgiving_number")]
+  #[serde(
+    deserialize_with = "forgiving_number",
+    skip_serializing_if = "Option::is_none"
+  )]
   pub season: Option<i32>,
-  #[serde(deserialize_with = "forgiving_number")]
+  #[serde(
+    deserialize_with = "forgiving_number",
+    skip_serializing_if = "Option::is_none"
+  )]
   pub episode: Option<i32>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub aired: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub plot: Option<String>,
   /// Runtime in minutes, per Kodi convention.
-  #[serde(deserialize_with = "forgiving_number")]
+  #[serde(
+    deserialize_with = "forgiving_number",
+    skip_serializing_if = "Option::is_none"
+  )]
   pub runtime: Option<u32>,
-  #[serde(rename = "actor")]
+  #[serde(rename = "actor", skip_serializing_if = "Vec::is_empty")]
   pub actors: Vec<Actor>,
-  #[serde(rename = "uniqueid")]
+  #[serde(rename = "uniqueid", skip_serializing_if = "Vec::is_empty")]
   pub unique_ids: Vec<UniqueId>,
 }
 
 /// `<tvshow>` document contents (the show-level `tvshow.nfo`).
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct TvShowNfo {
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub title: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub originaltitle: Option<String>,
-  #[serde(deserialize_with = "forgiving_number")]
+  #[serde(
+    deserialize_with = "forgiving_number",
+    skip_serializing_if = "Option::is_none"
+  )]
   pub year: Option<i32>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub premiered: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub plot: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub mpaa: Option<String>,
-  #[serde(rename = "genre")]
+  #[serde(rename = "genre", skip_serializing_if = "Vec::is_empty")]
   pub genres: Vec<String>,
-  #[serde(rename = "studio")]
+  #[serde(rename = "studio", skip_serializing_if = "Vec::is_empty")]
   pub studios: Vec<String>,
-  #[serde(rename = "actor")]
+  #[serde(rename = "actor", skip_serializing_if = "Vec::is_empty")]
   pub actors: Vec<Actor>,
-  #[serde(rename = "uniqueid")]
+  #[serde(rename = "uniqueid", skip_serializing_if = "Vec::is_empty")]
   pub unique_ids: Vec<UniqueId>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct Actor {
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub name: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub role: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub thumb: Option<String>,
-  #[serde(deserialize_with = "forgiving_number")]
+  #[serde(
+    deserialize_with = "forgiving_number",
+    skip_serializing_if = "Option::is_none"
+  )]
   pub order: Option<u32>,
 }
 
 /// A `<uniqueid type="tmdb" default="true">603</uniqueid>` element.  The
 /// attribute values are kept as strings — real files put arbitrary casing and
 /// junk in them, and consumers only ever compare them.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct UniqueId {
-  #[serde(rename = "@type")]
+  #[serde(rename = "@type", skip_serializing_if = "Option::is_none")]
   pub id_type: Option<String>,
-  #[serde(rename = "@default")]
+  #[serde(rename = "@default", skip_serializing_if = "Option::is_none")]
   pub default: Option<String>,
-  #[serde(rename = "$text")]
+  #[serde(rename = "$text", skip_serializing_if = "Option::is_none")]
   pub value: Option<String>,
 }
 
@@ -158,6 +203,44 @@ pub enum NfoError {
     root: String,
     source: quick_xml::DeError,
   },
+}
+
+#[derive(Debug, Error)]
+pub enum NfoWriteError {
+  #[error("Failed to serialize the <{root}> NFO document: {source}")]
+  XmlSerialize {
+    root: &'static str,
+    source: quick_xml::SeError,
+  },
+}
+
+/// Serialize a `<movie>` document, header included, ready to write as a
+/// `movie.nfo`.
+pub fn movie_to_xml(movie: &MovieNfo) -> Result<String, NfoWriteError> {
+  to_document("movie", movie)
+}
+
+/// Serialize a `<tvshow>` document, header included, ready to write as a
+/// `tvshow.nfo`.
+pub fn tvshow_to_xml(show: &TvShowNfo) -> Result<String, NfoWriteError> {
+  to_document("tvshow", show)
+}
+
+fn to_document<T: Serialize>(
+  root: &'static str,
+  value: &T,
+) -> Result<String, NfoWriteError> {
+  let mut body = String::new();
+  let mut serializer =
+    quick_xml::se::Serializer::with_root(&mut body, Some(root))
+      .map_err(|source| NfoWriteError::XmlSerialize { root, source })?;
+  serializer.indent(' ', 2);
+  value
+    .serialize(serializer)
+    .map_err(|source| NfoWriteError::XmlSerialize { root, source })?;
+  Ok(format!(
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n{body}\n"
+  ))
 }
 
 /// Parse an `.nfo` sidecar's contents.
@@ -473,5 +556,89 @@ mod tests {
       tvshow_nfo_path(Path::new("/lib/Some Show")),
       PathBuf::from("/lib/Some Show/tvshow.nfo")
     );
+  }
+}
+
+#[cfg(test)]
+mod writer_tests {
+  use super::*;
+
+  fn full_movie() -> MovieNfo {
+    MovieNfo {
+      title: Some("Fast & Furious <Deluxe>".to_string()),
+      originaltitle: Some("Fast & Furious".to_string()),
+      sorttitle: None,
+      year: Some(2009),
+      premiered: Some("2009-04-03".to_string()),
+      runtime: Some(107),
+      plot: Some("Cars go fast.\nThen faster.".to_string()),
+      outline: None,
+      tagline: Some("New model. Original parts.".to_string()),
+      mpaa: Some("PG-13".to_string()),
+      genres: vec!["Action".to_string(), "Crime".to_string()],
+      studios: vec!["Universal".to_string()],
+      countries: vec!["United States of America".to_string()],
+      directors: vec!["Justin Lin".to_string()],
+      actors: vec![Actor {
+        name: Some("Vin Diesel".to_string()),
+        role: Some("Dominic Toretto".to_string()),
+        thumb: Some("https://image.tmdb.org/t/p/w185/x.jpg".to_string()),
+        order: Some(0),
+      }],
+      unique_ids: vec![
+        UniqueId {
+          id_type: Some("tmdb".to_string()),
+          default: Some("true".to_string()),
+          value: Some("13804".to_string()),
+        },
+        UniqueId {
+          id_type: Some("imdb".to_string()),
+          default: None,
+          value: Some("tt1013752".to_string()),
+        },
+      ],
+    }
+  }
+
+  #[test]
+  fn movie_round_trips_through_the_reader() {
+    let xml = movie_to_xml(&full_movie()).unwrap();
+    assert!(xml.starts_with("<?xml version=\"1.0\""), "{xml}");
+    assert!(
+      xml.contains("<uniqueid type=\"tmdb\" default=\"true\">13804</uniqueid>"),
+      "{xml}"
+    );
+    assert!(xml.contains("<genre>Action</genre>"), "{xml}");
+    assert!(!xml.contains("<sorttitle"), "absent fields emit nothing: {xml}");
+    assert_eq!(parse_nfo(&xml).unwrap(), Nfo::Movie(full_movie()));
+  }
+
+  #[test]
+  fn tvshow_round_trips_through_the_reader() {
+    let show = TvShowNfo {
+      title: Some("Voltron: Legendary Defender".to_string()),
+      originaltitle: None,
+      year: Some(2016),
+      premiered: Some("2016-06-10".to_string()),
+      plot: Some("Five pilots, one robot.".to_string()),
+      mpaa: Some("TV-Y7".to_string()),
+      genres: vec!["Animation".to_string()],
+      studios: vec!["Netflix".to_string()],
+      actors: Vec::new(),
+      unique_ids: vec![UniqueId {
+        id_type: Some("tmdb".to_string()),
+        default: Some("true".to_string()),
+        value: Some("66732".to_string()),
+      }],
+    };
+    let xml = tvshow_to_xml(&show).unwrap();
+    assert!(xml.contains("<tvshow>"), "{xml}");
+    assert_eq!(parse_nfo(&xml).unwrap(), Nfo::TvShow(show));
+  }
+
+  #[test]
+  fn empty_documents_still_parse() {
+    let xml = movie_to_xml(&MovieNfo::default()).unwrap();
+    assert_eq!(parse_nfo(&xml).unwrap(), Nfo::Movie(MovieNfo::default()));
   }
 }

@@ -1762,12 +1762,14 @@ dependencies = [
  "notify",
  "openidconnect",
  "prometheus",
+ "reqwest 0.12.28",
  "rusqlite",
  "rust-embed",
  "rust-template-foundation",
  "schemars 0.9.0",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tap",
  "tempfile",
  "thiserror 2.0.20",
@@ -2672,8 +2674,8 @@ dependencies = [
 
 [[package]]
 name = "rust-template-foundation"
-version = "0.102.0"
-source = "git+https://github.com/LoganBarnett/rust-template.git#7429f551bbafa25d9de80479105e4c21aac8173b"
+version = "0.133.0"
+source = "git+https://github.com/LoganBarnett/rust-template.git#e343806b07815d899897a7aab2e8604439551e59"
 dependencies = [
  "aide",
  "axum",
@@ -2706,8 +2708,8 @@ dependencies = [
 
 [[package]]
 name = "rust-template-foundation-derive"
-version = "0.102.0"
-source = "git+https://github.com/LoganBarnett/rust-template.git#7429f551bbafa25d9de80479105e4c21aac8173b"
+version = "0.133.0"
+source = "git+https://github.com/LoganBarnett/rust-template.git#e343806b07815d899897a7aab2e8604439551e59"
 dependencies = [
  "proc-macro2",
  "quote",

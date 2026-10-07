@@ -13,13 +13,14 @@ use tokio_listener::ListenerAddress;
 use crate::library::{
   valid_library_name, Library, LibraryFileEntry, LibraryKind,
 };
+use crate::rip::config::{self as rip_config, RipConfig, RipFileEntry};
 
 /// Loku-specific and OIDC CLI arguments, flattened into the generated
 /// `CliRaw`.
 ///
 /// Env-var names are written out long-hand here because this struct is raw
 /// clap (flattened in via `extra_cli`), not a `MergeConfig` field — the
-/// macro's bare-`env` derivation does not reach inside `extra_cli` types.
+/// macro's automatic env derivation does not reach inside `extra_cli` types.
 /// Names follow the same `<app>_<flag>` convention the macro uses elsewhere.
 #[derive(Debug, clap::Args)]
 pub struct ExtraCliFields {
@@ -45,6 +46,15 @@ pub struct ExtraCliFields {
   /// Path to a file containing the OIDC client secret.
   #[arg(long, env = "loku_oidc_client_secret_file")]
   pub oidc_client_secret_file: Option<PathBuf>,
+
+  /// Path to a file holding the TMDB API key (a v3 key or a v4 read-access
+  /// token); enables disc identity resolution.
+  #[arg(long, env = "loku_tmdb_api_key_file")]
+  pub tmdb_api_key_file: Option<PathBuf>,
+
+  /// TMDB language tag for titles and metadata (e.g. en-US, ja-JP).
+  #[arg(long, env = "loku_tmdb_language")]
+  pub tmdb_language: Option<String>,
 }
 
 /// Loku-specific and OIDC config-file fields, flattened into the generated
@@ -57,6 +67,11 @@ pub struct ExtraFileFields {
   pub oidc_issuer: Option<String>,
   pub oidc_client_id: Option<String>,
   pub oidc_client_secret_file: Option<PathBuf>,
+  pub tmdb_api_key_file: Option<PathBuf>,
+  pub tmdb_language: Option<String>,
+  /// The optional `[rip]` table: which drive to watch, which discs-kind
+  /// library receives rips, and the re-insert policy.
+  pub rip: Option<RipFileEntry>,
 }
 
 #[derive(Debug, Clone, MergeConfig)]
@@ -74,7 +89,6 @@ pub struct Config {
   /// or sd-listen to inherit from systemd.
   #[merge_config(
     name = "listen",
-    env,
     default = "\"127.0.0.1:3000\".to_string()",
     parse
   )]
@@ -83,7 +97,7 @@ pub struct Config {
   /// construct the OIDC redirect URI.  Defaults to a local address so
   /// unauthenticated local use needs no configuration; only OIDC deployments
   /// must set it.
-  #[merge_config(env, default = "\"http://localhost:3000\".to_string()")]
+  #[merge_config(default = "\"http://localhost:3000\".to_string()")]
   pub base_url: String,
   #[merge_config(skip)]
   pub oidc: Option<OidcConfig>,
@@ -97,13 +111,43 @@ pub struct Config {
   /// required to exist yet; it is created when the index opens.
   #[merge_config(skip)]
   pub state_dir: PathBuf,
+  /// Disc ripping, when a `[rip]` table is present.  Resolved in
+  /// `resolve_rip`, which checks that the target library is a configured
+  /// discs-kind root.
+  #[merge_config(skip)]
+  pub rip: Option<RipConfig>,
+  /// TMDB access for disc identity resolution, when a key is configured.
+  /// Resolved in `resolve_tmdb` with the same explicit-path-then-systemd
+  /// credential fallback as the OIDC secret.
+  #[merge_config(skip)]
+  pub tmdb: Option<TmdbConfig>,
 }
+
+/// TMDB access: the key never appears in logs or `Debug` output.
+#[derive(Clone)]
+pub struct TmdbConfig {
+  pub api_key: String,
+  pub language: String,
+}
+
+impl std::fmt::Debug for TmdbConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("TmdbConfig")
+      .field("api_key", &"<redacted>")
+      .field("language", &self.language)
+      .finish()
+  }
+}
+
+const DEFAULT_TMDB_LANGUAGE: &str = "en-US";
+/// The systemd credential name the NixOS module loads the key under.
+const TMDB_CREDENTIAL: &str = "tmdb-api-key";
 
 impl std::fmt::Display for Config {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(
       f,
-      "Config(listen={}, libraries=[{}], state_dir={})",
+      "Config(listen={}, libraries=[{}], state_dir={}, rip={}, tmdb={})",
       self.listen_address,
       self
         .libraries
@@ -111,7 +155,14 @@ impl std::fmt::Display for Config {
         .map(|l| format!("{}:{}", l.name, l.path.display()))
         .collect::<Vec<_>>()
         .join(", "),
-      self.state_dir.display()
+      self.state_dir.display(),
+      self.rip.as_ref().map_or("off".to_string(), |rip| {
+        format!("{}->{}", rip.device.display(), rip.library.name)
+      }),
+      self
+        .tmdb
+        .as_ref()
+        .map_or("disabled", |tmdb| tmdb.language.as_str())
     )
   }
 }
@@ -132,19 +183,7 @@ impl Config {
     cli: &CliRaw,
     file: &ConfigFileRaw,
   ) -> Result<Vec<Library>, ConfigError> {
-    // The CLI flag is single-root developer sugar: it wins outright
-    // (matching the CLI-over-file precedence used elsewhere) and implies one
-    // downloads-kind library under a fixed name.
-    let candidates = cli.extra.library.clone().map_or_else(
-      || file.extra.library.clone().unwrap_or_default(),
-      |path| {
-        vec![LibraryFileEntry {
-          name: "downloads".to_string(),
-          path,
-          kind: LibraryKind::Downloads,
-        }]
-      },
-    );
+    let candidates = library_candidates(cli, file);
 
     if candidates.is_empty() {
       return Err(ConfigError::Validation(
@@ -186,6 +225,47 @@ impl Config {
         })
       })
       .collect()
+  }
+
+  fn resolve_rip(
+    cli: &CliRaw,
+    file: &ConfigFileRaw,
+  ) -> Result<Option<RipConfig>, ConfigError> {
+    rip_config::resolve(file.extra.rip.as_ref(), &library_candidates(cli, file))
+      .map_err(|error| ConfigError::Validation(error.to_string()))
+  }
+
+  fn resolve_tmdb(
+    cli: &CliRaw,
+    file: &ConfigFileRaw,
+  ) -> Result<Option<TmdbConfig>, ConfigError> {
+    let key_file = cli
+      .extra
+      .tmdb_api_key_file
+      .clone()
+      .or_else(|| file.extra.tmdb_api_key_file.clone())
+      .or_else(|| credential_path(TMDB_CREDENTIAL));
+    let language = cli
+      .extra
+      .tmdb_language
+      .clone()
+      .or_else(|| file.extra.tmdb_language.clone())
+      .unwrap_or_else(|| DEFAULT_TMDB_LANGUAGE.to_string());
+    key_file
+      .map(|path| {
+        // A configured-but-unreadable key is a startup error, as with the
+        // OIDC secret: silently running without identity resolution would
+        // hide a deployment mistake.
+        std::fs::read_to_string(&path)
+          .map(|key| TmdbConfig {
+            api_key: key.trim().to_string(),
+            language: language.clone(),
+          })
+          .map_err(|source| {
+            ConfigError::File(ConfigFileError::FileRead { path, source })
+          })
+      })
+      .transpose()
   }
 
   fn resolve_state_dir(
@@ -275,6 +355,38 @@ impl Config {
       }
     }
   }
+}
+
+/// A systemd-loaded credential by name, when the unit provides one.  The
+/// general form of foundation's `credential_secret_path`, which knows only
+/// the OIDC secret's name.
+fn credential_path(name: &str) -> Option<PathBuf> {
+  // The .ok() discard is deliberate: an unset CREDENTIALS_DIRECTORY simply
+  // means the process is not running under systemd with credentials.
+  std::env::var("CREDENTIALS_DIRECTORY")
+    .ok()
+    .map(|dir| PathBuf::from(dir).join(name))
+    .filter(|path| path.is_file())
+}
+
+/// The library entries as configured, before validation.  The CLI flag is
+/// single-root developer sugar: it wins outright (matching the
+/// CLI-over-file precedence used elsewhere) and implies one downloads-kind
+/// library under a fixed name.
+fn library_candidates(
+  cli: &CliRaw,
+  file: &ConfigFileRaw,
+) -> Vec<LibraryFileEntry> {
+  cli.extra.library.clone().map_or_else(
+    || file.extra.library.clone().unwrap_or_default(),
+    |path| {
+      vec![LibraryFileEntry {
+        name: "downloads".to_string(),
+        path,
+        kind: LibraryKind::Downloads,
+      }]
+    },
+  )
 }
 
 /// The field names from a (name, set) list, comma-joined for an error

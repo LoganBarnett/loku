@@ -225,6 +225,14 @@ Provide light-mode values in ~:root~ and override them inside ~@media
 (prefers-color-scheme: dark)~.  Never create separate selectors per colour
 scheme — the variables handle the switch.
 
+The at-rules in the examples below are prefixed with an empty CSS comment
+(~/**/~).  That is an artifact of this file, not of the style: ~llms.org~
+imports ~CONTRIBUTING.org~ into the assistant's context, and the importer reads
+a line that begins with ~@~ as an import path — even inside a source block.  The
+comment puts a non-~@~ character at the start of the line so a stray ~media~
+file cannot get pulled into every session.  Write the at-rule bare in real
+stylesheets.
+
 Good:
 
 #+begin_src css :results none :exports code
@@ -232,7 +240,7 @@ Good:
   --color-bg: #ffffff;
 }
 
-@media (prefers-color-scheme: dark) {
+/**/@media (prefers-color-scheme: dark) {
   :root {
     --color-bg: #111111;
   }
@@ -250,7 +258,7 @@ body {
   background: #ffffff;
 }
 
-@media (prefers-color-scheme: dark) {
+/**/@media (prefers-color-scheme: dark) {
   body {
     background: #111111;
   }
@@ -438,6 +446,9 @@ commit body is too long.  When several internal changes add up to one
 adopter-visible outcome, prefer a single entry describing that outcome over one
 entry per underlying change.
 
+When no action is needed, the change itself gets a one-sentence budget — no
+run-ons.
+
 Write each entry as a numbered list item (~1.~, ~2.~, …) under its subheading,
 not a dash bullet.
 
@@ -468,3 +479,32 @@ be:
 #+begin_quote
 1. Dependabot bumps merge on their own again.  No action needed.
 #+end_quote
+
+* Code review
+
+The project ships an on-demand code review: =just review= sends the current
+change set to a nested reviewer that judges it against the project's convention
+documents and your own =~/.claude/CLAUDE.md=, and reports what stands.  Claude
+Code users are expected to run it before opening a pull request, and to address
+what it reports:
+
+#+begin_src sh :results none :exports code
+just review --diff branch
+#+end_src
+
+=--diff branch= judges everything the branch would land against the default
+branch, committed or not; =--diff head= narrows that to the uncommitted work in
+progress.  The dev shell provides the tool, but the reviewer it drives is your
+own =claude= install, which must be on =PATH=.
+
+A run that found something and a run that broke must not look alike, so the exit
+code tells them apart: 0 means the changes conform, 1 means the review ran and
+something stands against them, and 2 means it could not judge the tree in full.
+=just= reports both 1 and 2 as a failed recipe, so read the code: a 1 with
+findings printed above it is the tool working, not breaking.
+
+Verdicts are recorded per file in =review.json= (ignored by git), so a re-run
+judges only the files that changed since; pass =--priors clear= to judge the
+recorded files afresh.  =--help= covers the rest.
+
+Nothing in CI runs the review on your behalf.
