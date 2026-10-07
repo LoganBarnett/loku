@@ -1,11 +1,10 @@
-module Page.Search exposing (Model, Msg, init, update, view)
+module Page.Search exposing (Model, Msg, init, subscriptions, update, view)
 
 import Api exposing (SearchPage)
 import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onInput, onSubmit)
-import Http
 import Route
 import Ui
 
@@ -30,7 +29,7 @@ type Results
 
 
 type Msg
-    = GotResults (Result Http.Error SearchPage)
+    = GotResults (Result Api.Error SearchPage)
     | QueryInput String
     | QuerySubmit
     | GoToPage Int
@@ -49,6 +48,11 @@ init key params =
     )
 
 
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -56,7 +60,7 @@ update msg model =
             ( { model | results = Loaded page }, Cmd.none )
 
         GotResults (Err err) ->
-            ( { model | results = Failed (httpErrorToString err) }, Cmd.none )
+            ( { model | results = Failed (Api.errorToString err) }, Cmd.none )
 
         QueryInput input ->
             ( { model | input = input }, Cmd.none )
@@ -154,22 +158,3 @@ viewResults model page =
           else
             text ""
         ]
-
-
-httpErrorToString : Http.Error -> String
-httpErrorToString err =
-    case err of
-        Http.BadUrl url ->
-            "Bad URL: " ++ url
-
-        Http.Timeout ->
-            "Request timed out"
-
-        Http.NetworkError ->
-            "Network error"
-
-        Http.BadStatus status ->
-            "Server error: " ++ String.fromInt status
-
-        Http.BadBody body ->
-            "Unexpected response: " ++ body

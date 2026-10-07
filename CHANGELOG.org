@@ -3,9 +3,30 @@
 
 * Upcoming
 ** Added
+1. Disc rips in their own per-disc directory browse as one item, with the disc's
+   title, year, and poster once identified.  No action needed.
+2. Loku rips discs itself: add a =[rip]= table (or the NixOS module's
+   =services.loku-server.rip= options) naming the drive and a discs-kind
+   library, and watch progress on the new Rips page.  Hosts using the standalone
+   =makemkv-ripper= module should disable it.
+3. Ripped discs resolve to a TMDB identity (Kodi NFO, artwork, directory renamed
+   to the title); set =tmdb_api_key_file= (NixOS: =tmdbApiKeyFile=) to turn it
+   on.  Without a key rips complete unidentified.
+4. A nix-darwin module (=darwinModules.server=) runs Loku as a launchd service,
+   taking secrets as file paths since launchd has no =LoadCredential=.  No
+   action needed.
+5. NixOS deployments can now set =baseUrl= and the OIDC options on
+   =services.loku-server=; existing defaults are unchanged.  No action needed.
 ** Fixes
 ** Breaking
+1. Files and directories whose names start with =.= are no longer indexed; rip
+   staging lives under a hidden =.rip/= directory inside a discs library.  The
+   media index rebuilds once on upgrade, so manual main-title picks must be
+   re-picked.
 ** Maintenance
+1. Project scaffolding now matches rust-template v0.133.0, bringing the
+   on-demand =just review= code review and a scheduled daily dependency bump.
+   No action needed.
 * v0.27.0
 ** Added
 1. Loku now serves multiple named libraries, each typed as =downloads= (yt-dlp)

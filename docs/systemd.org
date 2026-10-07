@@ -34,6 +34,8 @@ path explicitly.
 1. Add a ~LoadCredential~ entry in ~nix/modules/nixos-server.nix~.
 2. In ~crates/server/src/config.rs~, follow the existing pattern: try the
    explicit option first, fall back to ~credential_secret_path~, then error.
-3. On Darwin, pass the file path via ~<app>_oidc_client_secret_file~ (or the
-   equivalent new variable, following the ~<app>_<flag>~-lowercase scheme) in
-   ~nix/modules/darwin-server.nix~ — launchd has no ~LoadCredential~ equivalent.
+3. Outside systemd, pass the file path explicitly (following the
+   ~<app>_<flag>~-lowercase scheme, for example ~loku_tmdb_api_key_file~) —
+   launchd has no ~LoadCredential~ equivalent.  The nix-darwin module
+   (~nix/modules/darwin-server.nix~) does this for you by rendering the paths
+   into the config file it hands the service.

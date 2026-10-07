@@ -7,6 +7,7 @@ import Html.Attributes exposing (..)
 import Page.Browse as Browse
 import Page.Home as Home
 import Page.Player as Player
+import Page.Rips as Rips
 import Page.Search as Search
 import Route exposing (Route(..))
 import Url exposing (Url)
@@ -23,6 +24,7 @@ type Page
     | BrowsePage Browse.Model
     | SearchPage Search.Model
     | PlayerPage Player.Model
+    | RipsPage Rips.Model
     | NotFoundPage
 
 
@@ -43,6 +45,7 @@ type Msg
     | BrowseMsg Browse.Msg
     | SearchMsg Search.Msg
     | PlayerMsg Player.Msg
+    | RipsMsg Rips.Msg
 
 
 main : Program Flags Model Msg
@@ -51,7 +54,7 @@ main =
         { init = init
         , view = view
         , update = update
-        , subscriptions = \_ -> videoProgress (PlayerMsg << Player.VideoProgress)
+        , subscriptions = subscriptions
         , onUrlRequest = UrlRequested
         , onUrlChange = UrlChanged
         }
@@ -61,6 +64,36 @@ init : Flags -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init _ url key =
     routeToPage key (Route.parse url)
         |> Tuple.mapFirst (\page -> { key = key, page = page })
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ videoProgress (PlayerMsg << Player.VideoProgress)
+        , pageSubscriptions model.page
+        ]
+
+
+pageSubscriptions : Page -> Sub Msg
+pageSubscriptions page =
+    case page of
+        HomePage subModel ->
+            Sub.map HomeMsg (Home.subscriptions subModel)
+
+        BrowsePage subModel ->
+            Sub.map BrowseMsg (Browse.subscriptions subModel)
+
+        SearchPage subModel ->
+            Sub.map SearchMsg (Search.subscriptions subModel)
+
+        PlayerPage subModel ->
+            Sub.map PlayerMsg (Player.subscriptions subModel)
+
+        RipsPage subModel ->
+            Sub.map RipsMsg (Rips.subscriptions subModel)
+
+        NotFoundPage ->
+            Sub.none
 
 
 routeToPage : Nav.Key -> Route -> ( Page, Cmd Msg )
@@ -81,6 +114,10 @@ routeToPage key route =
         Route.Player params ->
             Player.init params
                 |> Tuple.mapBoth PlayerPage (Cmd.map PlayerMsg)
+
+        Route.Rips ->
+            Rips.init
+                |> Tuple.mapBoth RipsPage (Cmd.map RipsMsg)
 
         Route.NotFound ->
             ( NotFoundPage, Cmd.none )
@@ -187,6 +224,17 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        RipsMsg subMsg ->
+            case model.page of
+                RipsPage subModel ->
+                    Rips.update subMsg subModel
+                        |> Tuple.mapBoth
+                            (\m -> { model | page = RipsPage m })
+                            (Cmd.map RipsMsg)
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -205,6 +253,9 @@ view model =
 
                 PlayerPage subModel ->
                     Html.map PlayerMsg (Player.view subModel)
+
+                RipsPage subModel ->
+                    Html.map RipsMsg (Rips.view subModel)
 
                 NotFoundPage ->
                     p [ class "not-found" ] [ text "Page not found." ]

@@ -13,13 +13,24 @@
       --color-link:        #0055cc;
       --color-error:       #cc2200;
       --color-placeholder: #cccccc;
+      --color-ok:          #1e7b34;
+      --color-warn:        #9a6700;
       --width-card:        200px;
       --height-card:      112px;
       --width-player:      960px;
+      --width-candidate:   185px;
+      --width-form:        640px;
+      --radius-card:       8px;
+      --gap-tight:         0.5rem;
+      --border-rule:       1px solid var(--color-surface);
+      --gap-loose:         1rem;
+      --margin-section:    1.5rem;
+      --margin-bottom-card: 1rem;
       --pad-page:          1rem;
       --pad-listing:       0.5rem 1rem;
       --pad-panel:         2rem;
       --pad-page-item:     0.3rem 0.6rem;
+      --pad-button:        0.4rem 0.8rem;
       --margin-page-item:  0 0.1rem;
       --margin-top-tight:  0.25rem;
       --margin-top-loose:  0.5rem;
@@ -37,6 +48,8 @@
         --color-link:        #77aaff;
         --color-error:       #ff8888;
         --color-placeholder: #333333;
+        --color-ok:          #7fd694;
+        --color-warn:        #e3b341;
       }
     }
     body { margin: 0; font-family: sans-serif; background: var(--color-bg); color: var(--color-text); }
@@ -54,28 +67,39 @@
     .listing { padding: var(--pad-listing); }
     .dir-entry { padding: 0.5rem 0; }
 
+    /* Notes */
+    .success-note { padding: var(--pad-page); color: var(--color-ok); }
+    .empty-note { opacity: var(--opacity-muted); }
+    .error-dismiss { margin-left: var(--gap-tight); padding: var(--pad-page-item); font-size: var(--font-size-fine); cursor: pointer; }
+
     /* Video cards */
     .video-card { display: inline-block; margin: 0.5rem; vertical-align: top; }
     .card-thumb { width: var(--width-card); height: var(--height-card); object-fit: cover; display: block; }
     .card-thumb-placeholder { width: var(--width-card); height: var(--height-card); background: var(--color-placeholder); display: flex; align-items: center; justify-content: center; }
     .card-title { max-width: var(--width-card); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-caption); margin-top: var(--margin-top-tight); }
-    .card-badge { font-size: 0.75rem; max-width: var(--width-card); opacity: var(--opacity-muted); }
+    .card-badge { font-size: 0.75rem; max-width: var(--width-card); opacity: var(--opacity-muted); display: block; }
+    .card-thumb-poster { object-fit: contain; background: var(--color-placeholder); }
+    .card-year { opacity: var(--opacity-muted); }
+    .card-badge-warn { color: var(--color-warn); }
 
     /* Search */
-    .search-form { display: flex; gap: 0.5rem; }
-    .search-form-home { margin-bottom: 1.5rem; max-width: 640px; }
+    .search-form { display: flex; gap: var(--gap-tight); }
+    .search-form-home { margin-bottom: var(--margin-section); max-width: var(--width-form); }
     .search-form-bar { padding: var(--pad-listing); }
     .search-form-header { margin-top: var(--margin-top-loose); }
-    .search-input { flex: 1; padding: 0.4rem 0.6rem; font-size: var(--font-size-control); border: 1px solid var(--color-surface); background: var(--color-bg); color: var(--color-text); border-radius: 4px; }
-    .search-button { padding: 0.4rem 0.8rem; font-size: var(--font-size-control); cursor: pointer; }
+    .search-input { flex: 1; padding: 0.4rem 0.6rem; font-size: var(--font-size-control); border: var(--border-rule); background: var(--color-bg); color: var(--color-text); border-radius: 4px; }
+    .search-button { padding: var(--pad-button); font-size: var(--font-size-control); cursor: pointer; }
     .result-summary { opacity: var(--opacity-muted); font-size: var(--font-size-detail); }
 
     /* Home library cards */
-    .library-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
-    .library-card { display: block; padding: 1.5rem 2rem; background: var(--color-surface); border-radius: 8px; min-width: 180px; }
+    .library-grid { display: flex; gap: var(--gap-loose); flex-wrap: wrap; }
+    .library-card { display: block; padding: 1.5rem 2rem; background: var(--color-surface); border-radius: var(--radius-card); min-width: 180px; }
     .library-card-icon { font-size: 2rem; }
     .library-card-name { font-size: 1.1rem; font-weight: bold; margin-top: var(--margin-top-loose); }
     .library-card-kind { font-size: var(--font-size-caption); opacity: var(--opacity-muted); }
+
+    /* Home */
+    .home-tools { margin-top: var(--margin-section); font-size: var(--font-size-detail); }
 
     /* Disc sets */
     .disc-set-body { max-width: var(--width-card); }
@@ -98,6 +122,43 @@
     .player-title { margin-top: 0.75rem; }
     .buffer-progress { width: 100%; max-width: var(--width-player); height: 4px; display: block; margin-bottom: 0.25rem; accent-color: var(--color-link); }
     .description { margin-top: var(--pad-page); max-width: var(--width-player); max-height: 14rem; overflow-y: auto; font-size: var(--font-size-detail); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+
+    /* Rips */
+    .rips-section { margin-top: var(--margin-section); }
+    .drive-card { background: var(--color-surface); padding: var(--pad-page); border-radius: var(--radius-card); margin-bottom: var(--margin-bottom-card); }
+    .drive-device { font-weight: bold; }
+    .drive-meta { opacity: var(--opacity-muted); font-size: var(--font-size-detail); }
+    .drive-actions { display: flex; gap: var(--gap-tight); margin-top: var(--margin-top-loose); }
+    .drive-button { padding: var(--pad-button); font-size: var(--font-size-control); cursor: pointer; }
+    .rip-progress { width: 100%; max-width: 480px; height: 8px; display: block; accent-color: var(--color-link); }
+    .rip-op { opacity: var(--opacity-muted); font-size: var(--font-size-detail); margin-top: var(--margin-top-tight); }
+    .state-badge { display: inline-block; padding: 0.1rem var(--gap-tight); border-radius: 999px; font-size: var(--font-size-fine); font-weight: bold; color: var(--color-bg); background: var(--color-link); }
+    .state-badge-active { background: var(--color-link); }
+    .state-badge-done { background: var(--color-ok); }
+    .state-badge-failed { background: var(--color-error); }
+    .state-badge-idle { background: var(--color-text); opacity: var(--opacity-muted); }
+    .state-badge-warn { background: var(--color-warn); }
+    .rip-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-detail); }
+    /* The rips history is the app's only table, so bare element rules are safe
+     * here.
+     */
+    th { text-align: left; padding: var(--pad-page-item); border-bottom: var(--border-rule); }
+    td { padding: var(--pad-page-item); border-bottom: var(--border-rule); vertical-align: top; }
+    .rip-error { color: var(--color-error); font-size: var(--font-size-fine); }
+
+    /* Identification */
+    .identity-disc { background: var(--color-surface); padding: var(--pad-page); border-radius: var(--radius-card); margin-bottom: var(--margin-bottom-card); }
+    .identity-label { font-weight: bold; }
+    .identity-form { margin-top: var(--margin-top-loose); max-width: var(--width-form); }
+    .year-input { flex: 0 0 6rem; }
+    .candidate-list { display: flex; flex-wrap: wrap; gap: var(--gap-loose); margin-top: var(--margin-top-loose); }
+    .candidate-card { width: var(--width-candidate); display: flex; flex-direction: column; }
+    .candidate-poster { width: var(--width-candidate); display: block; background: var(--color-placeholder); }
+    .candidate-poster-placeholder { width: var(--width-candidate); aspect-ratio: 2 / 3; background: var(--color-placeholder); display: flex; align-items: center; justify-content: center; }
+    .candidate-title { font-weight: bold; font-size: var(--font-size-caption); margin-top: var(--margin-top-tight); }
+    .candidate-kind { opacity: var(--opacity-muted); font-size: var(--font-size-fine); }
+    .candidate-overview { font-size: var(--font-size-fine); max-height: 6rem; overflow-y: auto; margin: var(--margin-top-tight) 0; flex: 1; }
+    .candidate-pick { padding: var(--pad-button); font-size: var(--font-size-detail); cursor: pointer; margin-top: auto; }
   </style>
 </head>
 <body>

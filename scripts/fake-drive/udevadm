@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# A stand-in for `udevadm info --query=property --name=<device>` so the rip
+# pipeline can be exercised on a machine without udev or an optical drive
+# (`just run-fake-drive`).  The "drive" holds a disc whenever FAKE_DISC_LABEL
+# is set; FAKE_DISC_UUID names it.  Every other udevadm invocation (the
+# startup `--version` check) succeeds trivially.
+set -o errexit -o nounset -o pipefail
+
+if [[ "${1:-}" == "--version" ]]; then
+  echo "fake-udevadm 1"
+  exit 0
+fi
+
+echo "DEVNAME=${FAKE_DEVICE:-/dev/sr0}"
+if [[ -n "${FAKE_DISC_LABEL:-}" ]]; then
+  echo "ID_CDROM_MEDIA=1"
+  echo "ID_CDROM_MEDIA_DVD=1"
+  echo "ID_FS_TYPE=udf"
+  echo "ID_FS_LABEL=${FAKE_DISC_LABEL}"
+  if [[ -n "${FAKE_DISC_UUID:-}" ]]; then
+    echo "ID_FS_UUID=${FAKE_DISC_UUID}"
+  fi
+else
+  echo "ID_CDROM_MEDIA=0"
+fi

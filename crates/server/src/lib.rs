@@ -1,7 +1,9 @@
 pub mod config;
 pub mod frontend;
+pub mod identity;
 pub mod index;
 pub mod library;
 pub mod media;
+pub mod rip;
 pub mod routes;
 pub mod web_base;

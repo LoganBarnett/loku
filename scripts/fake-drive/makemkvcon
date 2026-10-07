@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# A stand-in for makemkvcon's robot mode (`just run-fake-drive`).  `info`
+# prints a disc analysis with FAKE_TITLES titles (default 2); `mkv ... all
+# <dir>` writes one marker .mkv per title into <dir>, pacing itself with
+# progress lines so the Rips page has something to show.  Invoked with no
+# command (the startup check) it exits like the real binary does: usage,
+# non-zero.
+set -o errexit -o nounset -o pipefail
+
+titles="${FAKE_TITLES:-2}"
+label="${FAKE_DISC_LABEL:-FAKE_DISC}"
+
+# Robot-mode output, one record per line; see rip/makemkv.rs for the grammar.
+emit_info() {
+  echo 'MSG:1005,0,1,"MakeMKV v1.18.2 fake started","%1 started","MakeMKV v1.18.2 fake"'
+  echo "DRV:0,2,999,12,\"FAKE DRIVE\",\"${label}\",\"${FAKE_DEVICE:-/dev/sr0}\""
+  echo "TCOUNT:${titles}"
+  echo 'CINFO:1,6209,"DVD disc"'
+  echo "CINFO:2,0,\"${label//_/ }\""
+  echo "CINFO:32,0,\"${label}\""
+  for ((index = 0; index < titles; index++)); do
+    echo "TINFO:${index},8,0,\"$((index + 3))\""
+    echo "TINFO:${index},9,0,\"0:$((21 + index)):00\""
+    echo "TINFO:${index},11,0,\"$(((index + 1) * 1000000))\""
+    echo "TINFO:${index},26,0,\"$((index + 1))\""
+    printf 'TINFO:%d,27,0,"title_t%02d.mkv"\n' "$index" "$index"
+  done
+}
+
+emit_rip() {
+  local dir="$1"
+  echo 'PRGT:5018,0,"Saving all titles to MKV files"'
+  for ((index = 0; index < titles; index++)); do
+    echo "PRGC:5017,0,\"Saving to MKV file title_t$(printf '%02d' "$index").mkv\""
+    for step in 1 2 3 4; do
+      echo "PRGV:$((step * 16384)),$(((index * 4 + step) * 65536 / (titles * 4))),65536"
+      sleep "${FAKE_RIP_STEP_SECS:-1}"
+    done
+    # BSD head on macOS, where this shim runs, lacks --bytes; -c is its only
+    # spelling.
+    head -c 1024 /dev/zero > "${dir}/title_t$(printf '%02d' "$index").mkv"
+  done
+  echo "MSG:5003,0,2,\"Copy complete. ${titles} titles saved.\",\"%1\",\"x\""
+}
+
+command=""
+for arg in "$@"; do
+  case "$arg" in
+    info | mkv) command="$arg" ;;
+  esac
+done
+
+case "$command" in
+  info) emit_info ;;
+  mkv)
+    # The output directory is the last argument.
+    emit_rip "${@: -1}"
+    ;;
+  *)
+    echo "usage: makemkvcon [options] command [parameters]" >&2
+    exit 1
+    ;;
+esac

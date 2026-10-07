@@ -5,6 +5,8 @@
 // the file level.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod common;
+
 use axum::{
   body::Body,
   http::{Request, StatusCode},
@@ -97,6 +99,8 @@ async fn test_router_with_index(
       libraries: state_libraries,
       index: state_index,
       derivation_active: tokio::sync::watch::channel(None).1,
+      rips: None,
+      identity: None,
     })
     .merge(app_routes(&libraries))
     .spa::<Frontend>()
@@ -142,6 +146,8 @@ fn cli_with_library(library: &Path) -> CliRaw {
       oidc_issuer: None,
       oidc_client_id: None,
       oidc_client_secret_file: None,
+      tmdb_api_key_file: None,
+      tmdb_language: None,
     },
   }
 }
@@ -1343,6 +1349,8 @@ fn test_config_missing_library_returns_error() {
       oidc_issuer: None,
       oidc_client_id: None,
       oidc_client_secret_file: None,
+      tmdb_api_key_file: None,
+      tmdb_language: None,
     },
   };
 
@@ -1541,4 +1549,140 @@ fn test_config_partial_oidc_errors() {
     err.to_string().contains("partial OIDC"),
     "error should describe partial OIDC config, got: {err}"
   );
+}
+
+// ── per-disc directories in the browse API ──────────────────────────────────
+
+use common::write_disc_dir;
+
+#[tokio::test]
+async fn test_browse_lists_disc_directory_as_one_entry() {
+  let discs = tempfile::tempdir().unwrap();
+  write_disc_dir(
+    discs.path(),
+    "VOLTRON_S1_D1",
+    "uuid-1",
+    &[(1300, 5), (1310, 5)],
+  );
+  // A single-title disc is still one card, unlike a legacy singleton.
+  write_disc_dir(discs.path(), "LONE_FEATURE", "uuid-2", &[(8160, 30)]);
+  fs::write(discs.path().join("Legacy_Film.mkv"), b"legacy").unwrap();
+
+  let app =
+    test_router_multi(&[("discs", discs.path(), LibraryKind::Discs)]).await;
+  let json = get_json(app, "/api/browse?library=discs").await;
+  let entries = json["entries"].as_array().unwrap();
+  assert!(
+    !entries.iter().any(|e| e["type"] == "directory"),
+    "disc directories must not also appear as plain directories: {entries:?}"
+  );
+
+  let voltron = entries
+    .iter()
+    .find(|e| e["disc_set"] == "VOLTRON_S1_D1__uuid-1")
+    .expect("the disc directory is one disc_set entry");
+  assert_eq!(voltron["type"], "disc_set");
+  assert_eq!(voltron["path"], "VOLTRON_S1_D1__uuid-1");
+  assert_eq!(voltron["display_title"], "VOLTRON S1 D1");
+  assert_eq!(voltron["disc_id"], "uuid-1");
+  assert_eq!(voltron["identity_state"], "unresolved");
+  assert!(voltron.get("poster_path").is_none());
+  assert_eq!(voltron["main"]["name"], "title_t01.mkv", "largest file");
+  assert_eq!(voltron["titles"].as_array().unwrap().len(), 2);
+  assert_eq!(voltron["titles"][0]["title_source"], "disc_label");
+
+  let lone = entries
+    .iter()
+    .find(|e| e["disc_set"] == "LONE_FEATURE__uuid-2")
+    .expect("a single-title disc directory is still a disc_set");
+  assert_eq!(lone["titles"].as_array().unwrap().len(), 1);
+
+  assert!(
+    entries
+      .iter()
+      .any(|e| e["type"] == "video" && e["name"] == "Legacy_Film.mkv"),
+    "legacy flat rips keep browsing as before"
+  );
+}
+
+#[tokio::test]
+async fn test_browse_inside_disc_directory_lists_its_titles() {
+  let discs = tempfile::tempdir().unwrap();
+  write_disc_dir(discs.path(), "VOLTRON", "uuid-1", &[(1300, 5), (1310, 5)]);
+
+  let app =
+    test_router_multi(&[("discs", discs.path(), LibraryKind::Discs)]).await;
+  let json =
+    get_json(app, "/api/browse?library=discs&path=VOLTRON__uuid-1").await;
+  let entries = json["entries"].as_array().unwrap();
+  assert_eq!(entries.len(), 1);
+  assert_eq!(entries[0]["type"], "disc_set");
+  assert_eq!(entries[0]["disc_set"], "VOLTRON__uuid-1");
+  assert_eq!(entries[0]["titles"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn test_identified_disc_directory_carries_title_year_and_poster() {
+  let discs = tempfile::tempdir().unwrap();
+  let dir = write_disc_dir(discs.path(), "MATRIX", "uuid-9", &[(8160, 30)]);
+  fs::write(
+    dir.join("movie.nfo"),
+    "<movie><title>The Matrix</title><year>1999</year>\
+     <uniqueid type=\"tmdb\" default=\"true\">603</uniqueid></movie>",
+  )
+  .unwrap();
+  fs::write(dir.join("poster.jpg"), b"jpeg").unwrap();
+
+  let app =
+    test_router_multi(&[("discs", discs.path(), LibraryKind::Discs)]).await;
+  let json = get_json(app.clone(), "/api/browse?library=discs").await;
+  let set = &json["entries"][0];
+  assert_eq!(set["display_title"], "The Matrix");
+  assert_eq!(set["year"], 1999);
+  assert_eq!(set["identity_state"], "resolved");
+  assert_eq!(set["poster_path"], "MATRIX__uuid-9/poster.jpg");
+  assert_eq!(set["main"]["title_source"], "nfo");
+
+  let response = get(app, "/files/discs/MATRIX__uuid-9/poster.jpg").await;
+  assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_main_title_override_for_directory_keyed_set() {
+  let discs = tempfile::tempdir().unwrap();
+  write_disc_dir(discs.path(), "VOLTRON", "uuid-1", &[(1300, 5), (1310, 5)]);
+
+  let app =
+    test_router_multi(&[("discs", discs.path(), LibraryKind::Discs)]).await;
+  let response = post_json(
+    app.clone(),
+    "/api/disc-sets/main",
+    serde_json::json!({
+      "library": "discs",
+      "disc_set": "VOLTRON__uuid-1",
+      "path": "VOLTRON__uuid-1/title_t00.mkv",
+    }),
+  )
+  .await;
+  assert_eq!(response.status(), StatusCode::OK);
+
+  let json = get_json(app, "/api/browse?library=discs").await;
+  assert_eq!(json["entries"][0]["main"]["name"], "title_t00.mkv");
+}
+
+#[tokio::test]
+async fn test_search_reaches_titles_through_the_disc_label() {
+  let discs = tempfile::tempdir().unwrap();
+  write_disc_dir(
+    discs.path(),
+    "VOLTRON_S1_D1",
+    "uuid-1",
+    &[(1300, 5), (1310, 5)],
+  );
+
+  let app =
+    test_router_multi(&[("discs", discs.path(), LibraryKind::Discs)]).await;
+  let json = get_json(app, "/api/search?q=voltron&library=discs").await;
+  assert_eq!(json["total"], 2);
+  assert_eq!(json["items"][0]["disc_set"], "VOLTRON_S1_D1__uuid-1");
 }

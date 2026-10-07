@@ -8,10 +8,13 @@
 use futures_util::stream::{self, StreamExt};
 use loku_server::config::Config;
 use loku_server::frontend::Frontend;
+use loku_server::identity;
 use loku_server::index::store::Index;
+use loku_server::index::wakes::Wakes;
 use loku_server::index::watch;
 use loku_server::media::ffmpeg::{FfmpegRunner, RealFfmpeg};
 use loku_server::media::worker;
+use loku_server::rip;
 use loku_server::web_base::{
   app_routes, AppState, IndexCheck, LibraryPathCheck, MediaToolsCheck,
 };
@@ -87,6 +90,16 @@ pub async fn main(
     })
     .await;
 
+  // Disc ripping is optional; missing tools degrade the `rip` health
+  // component rather than the server.
+  let wakes = Wakes::new();
+  let rips = rip::subsystem(&config, &server, &index, &wakes).await;
+
+  // Identity resolution is optional too: with a TMDB key the resolver and
+  // its worker come up; without one discs stay unidentified and the
+  // `identity` health component says so.
+  let identity = identity::subsystem(&config, &server, &index, &wakes).await;
+
   // Index maintenance runs in the background so the listener binds (and
   // systemd readiness fires) immediately: watchers register first, then the
   // initial scan runs, then filesystem events keep the index current.  The
@@ -97,7 +110,6 @@ pub async fn main(
   // the maintenance task whenever the index gains new facts.  Its status
   // receiver feeds the API's per-item derivation reporting; without media
   // tools a never-updated channel stands in.
-  let worker_wake = Arc::new(tokio::sync::Notify::new());
   let derivation_active = ffmpeg.as_ref().map_or_else(
     || tokio::sync::watch::channel(None).1,
     |runner| {
@@ -105,7 +117,7 @@ pub async fn main(
         index.clone(),
         config.libraries.clone(),
         runner.clone(),
-        worker_wake.clone(),
+        wakes.derivation.clone(),
       )
     },
   );
@@ -115,7 +127,7 @@ pub async fn main(
     config.libraries.clone(),
     last_scan_completed.clone(),
     ffmpeg.clone(),
-    worker_wake.clone(),
+    wakes.clone(),
   ) {
     warn!(
       error = %watch_error,
@@ -126,7 +138,7 @@ pub async fn main(
       config.libraries.clone(),
       last_scan_completed.clone(),
       ffmpeg,
-      worker_wake,
+      wakes,
     );
   }
 
@@ -137,6 +149,8 @@ pub async fn main(
       libraries,
       index,
       derivation_active,
+      rips,
+      identity,
     })
     .merge(app_routes(&config.libraries))
     // Serve the embedded Elm frontend as an SPA, falling back to index.html

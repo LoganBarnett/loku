@@ -1,14 +1,26 @@
 {
   description = "Local video browser and player";
   inputs = {
-    # LLM: Do NOT change this URL unless explicitly directed. This is the
-    # correct format for nixpkgs stable (25.11 is correct, not nixos-25.11).
-    nixpkgs.url = "github:NixOS/nixpkgs/25.11";
+    # crates.io now 403s generic curl User-Agents, and nixpkgs' fix to make
+    # `importCargoLock` fetch crates from static.crates.io exists only as a
+    # backport.  The bare `25.11` ref is a frozen release tag that never
+    # receives backports; `nixos-25.11` is the maintained release branch, so
+    # it is the one required here.  LLM: Do NOT change this URL unless
+    # explicitly directed.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     rust-overlay.url = "github:oxalica/rust-overlay";
     crane.url = "github:ipetkov/crane";
     changelog-roller.url = "github:LoganBarnett/changelog-roller";
+    changelog-roller.inputs.nixpkgs.follows = "nixpkgs";
     foundation.url = "github:LoganBarnett/rust-template";
     foundation.inputs.nixpkgs.follows = "nixpkgs";
+    # Without this follows, foundation carries its own changelog-roller whose
+    # private nixpkgs is the frozen `25.11` tag, reintroducing the blocked
+    # crates.io fetches this flake's nixpkgs pin exists to avoid.  The
+    # changelog-roller coupling is managed by orchestrated foundation and
+    # changelog-roller bumps, so a per-spawn structural check would only add
+    # brittleness; this wiring is therefore not compliance-checked.
+    foundation.inputs.changelog-roller.follows = "changelog-roller";
     org-fmt.url = "github:LoganBarnett/org-fmt";
     org-fmt.inputs.nixpkgs.follows = "nixpkgs";
     org-fmt.inputs.rust-overlay.follows = "rust-overlay";
@@ -77,8 +89,8 @@
       # provides, so the static link fails.  The CC variable is target-scoped
       # (the cc crate consults it only when compiling for that triple), and it
       # is passed only to the musl builds so the cross toolchain stays out of
-      # every other build's closure.  The durable fix belongs in
-      # rust-template's mkMuslPackages and is tracked at
+      # every other build's closure.  The durable fix belongs in the
+      # foundation flake's mkMuslPackages and is tracked at
       # https://github.com/LoganBarnett/rust-template/issues/94; this is the
       # interim.
       muslCommonArgs =
@@ -94,7 +106,7 @@
           CC_aarch64_unknown_linux_musl = "${cc}/bin/${cc.targetPrefix}cc";
         });
       # On Linux each binary also gets a statically-linked `<name>-musl`
-      # variant; on other systems mkMuslPackages returns an empty set.
+      # variant.
       muslPackages = foundation.lib.mkMuslPackages {
         inherit self pkgs system crates crane;
         commonArgs = muslCommonArgs;
@@ -114,7 +126,7 @@
       # `cargo-zigbuild zig ar` is exactly the code path its own generated
       # `ar` takes.  Names are target-scoped, so one overlay serves both
       # helpers and cannot leak into any other build.  The durable fix
-      # belongs in rust-template's zig helpers and is tracked at
+      # belongs in the foundation flake's zig helpers and is tracked at
       # https://github.com/LoganBarnett/rust-template/issues/95; this is the
       # interim.
       zigAr = pkgs.writeShellScript "zigar" ''
@@ -252,6 +264,22 @@
             changelog-roller.packages.${system}.default
             # Formats org-mode documents (treefmt delegates .org files to it).
             org-fmt.packages.${system}.default
+            # One-shot Dependabot-backlog combiner, provided by the foundation
+            # flake rather than copied in, so it stays current with the
+            # template.  Run as `just dependabot-combine`.
+            foundation.packages.${system}.dependabot-combine
+            # The daily dependency bumper the scheduled dependency-bump
+            # workflow runs; provided by the foundation flake rather than
+            # copied in, so it stays current with the template.  Run locally
+            # as `just dependency-bump` to bump and compose changelog entries
+            # in the working tree for review.
+            foundation.packages.${system}.dependency-bump
+            # On-demand code review that judges a change set against the
+            # project's conventions; provided by the foundation flake rather
+            # than copied in, so it stays current with the template.  Run as
+            # `just review`.  The reviewer it drives is your own `claude`
+            # install, which this shell does not provide.
+            foundation.packages.${system}.review
             # ABI baseline check used by the reusable CI workflow's `abi` job;
             # `doCheck = false` skips upstream snapshot tests that assume x86_64.
             (pkgs.cargo-semver-checks.overrideAttrs (_: {doCheck = false;}))
@@ -304,8 +332,20 @@
     # NIXOS MODULES
     # ================================================================
     nixosModules = {
-      server = import ./nix/modules/server.nix {inherit self;};
+      server = import ./nix/modules/nixos-server.nix {
+        inherit self foundation;
+      };
       default = self.nixosModules.server;
+    };
+
+    # ================================================================
+    # DARWIN MODULES
+    # ================================================================
+    darwinModules = {
+      server = import ./nix/modules/darwin-server.nix {
+        inherit self foundation;
+      };
+      default = self.darwinModules.server;
     };
   };
 }

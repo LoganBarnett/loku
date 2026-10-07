@@ -1,0 +1,18 @@
+# Configuration for `just run-fake-drive`: one discs library under tmp/ and a
+# rip section pointed at the fake drive.  Paths are relative to the repository
+# root, which is where the recipe runs.
+log_level = "info"
+log_format = "text"
+
+[[library]]
+name = "discs"
+path = "tmp/discs"
+kind = "discs"
+
+[rip]
+device = "/dev/sr0"
+library = "discs"
+policy = "skip"
+eject = true
+poll_interval_secs = 2
+replaced_retention_days = 1

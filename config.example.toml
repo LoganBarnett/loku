@@ -41,8 +41,32 @@ log_format = "text"  # Options: text, json
 # local address otherwise.
 # base_url = "https://loku.example.com"
 
+# TMDB access (optional).  A key turns on disc identity resolution: ripped
+# discs are matched to TMDB, get a Kodi movie.nfo/tvshow.nfo plus poster and
+# fanart, and are renamed to "<Title (Year)>__<id>".  Under systemd the NixOS
+# module loads the key as the "tmdb-api-key" credential instead.
+# tmdb_api_key_file = "/run/credentials/loku-server.service/tmdb-api-key"
+# tmdb_language = "en-US"  # e.g. ja-JP for Japanese titles
+
 # OIDC authentication (optional).  Set all three to require login; the secret
 # file may also be supplied via systemd LoadCredential.
 # oidc_issuer = "https://sso.example.com/application/o/loku"
 # oidc_client_id = "loku"
 # oidc_client_secret_file = "/run/credentials/loku.service/oidc-secret"
+
+# Disc ripping (optional).  With a [rip] table the server polls the drive for
+# a disc, rips every title into `<library>/<label>__<id>/` beside a
+# `disc.json` manifest and the raw MakeMKV disc analysis, and hands the result
+# to the index and the compat worker.  Needs makemkvcon (with its licence key
+# in $HOME/.MakeMKV), udevadm, and eject on PATH; the NixOS module wires all of
+# that up.
+#
+# [rip]
+# device = "/dev/sr0"          # The optical drive to poll.
+# library = "discs"            # Must name a discs-kind [[library]].
+# policy = "skip"              # skip | rescan | rerip when the disc's
+#                              # directory already exists.
+# eject = true                 # Eject once a rip completes.
+# poll_interval_secs = 5
+# replaced_retention_days = 14 # How long rerip leftovers and failed attempts
+#                              # stay under the hidden .rip/ directory.

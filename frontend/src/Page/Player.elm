@@ -1,10 +1,9 @@
-module Page.Player exposing (Model, Msg(..), init, mediaErrorMessage, update, view)
+module Page.Player exposing (Model, Msg(..), init, mediaErrorMessage, subscriptions, update, view)
 
 import Api exposing (VideoItem)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (on)
-import Http
 import Json.Decode as D
 import Route
 
@@ -33,7 +32,7 @@ type MediaErrorCode
 
 
 type Msg
-    = GotItem (Result Http.Error VideoItem)
+    = GotItem (Result Api.Error VideoItem)
     | VideoCanPlay
     | VideoProgress Float
     | MediaError MediaErrorCode
@@ -44,6 +43,11 @@ init params =
     ( Loading params
     , Api.getItem params.library params.path GotItem
     )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )

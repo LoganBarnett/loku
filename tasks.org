@@ -81,6 +81,24 @@ without an NFO get a cleaned filename title (marked as such via =title_source=,
 so the UI can style guessed titles differently) and an extracted thumbnail
 frame.
 
+*** DONE Key disc sets on the per-disc directory, not the filename prefix
+
+=disc.rs= groups a set by the filename prefix ahead of =_tNN=, which fits
+MakeMKV's Blu-ray basenames (=title_t00=) but not its DVD ones: those carry a
+per-title token from the on-disc structure (=C3_t00=, =D2_t04=), so every DVD
+title indexes as its own one-file set.  Under the per-disc directory layout (see
+"Rip each disc into its own directory") the set /is/ the directory.  Keep the
+prefix heuristic only for legacy flat rips, and even there treat a shared label
+as a hint rather than proof of one disc — see the backlog note.
+
+Landed: a directory carrying a =disc.json= manifest is one disc set; the scanner
+records it in a =discs= table (label, id, fingerprint, and the identity read
+back from a directory-level NFO), every title inside keys its set on the
+directory, and the browse API renders the directory as one card with the
+resolved title, year, and poster.  Hidden directories are pruned from the scan
+and the watcher so rip staging never surfaces.  The prefix heuristic remains for
+legacy flat rips only.
+
 ** Produce NFO sidecars (fold ripping into Loku)
 
 The decision is that Loku owns the rip, so it is the ultimate consumer and
@@ -88,7 +106,7 @@ producer: rip, resolve identity, write NFO + artwork, done.  This replaces the
 standalone =nixos-modules/makemkv-ripper.nix= service in ~/dev/nix-config over
 time.
 
-*** TODO Own the rip pipeline (invoke =makemkvcon=)
+*** DONE Own the rip pipeline (invoke =makemkvcon=)
 
 Absorb the ripping the NixOS module does today: scan the disc, rip *all* titles
 (=makemkvcon mkv ... all=), name and place the output.  Policy is "rip the whole
@@ -96,7 +114,13 @@ disc — the disc becomes the offline backup, the rip is authoritative."  Rippin
 everything (not main-title-only) is what keeps our captured structure matched to
 how TheDiscDB catalogs discs.
 
-*** TODO Persist the =makemkvcon -r info= output as a first-class artifact
+Landed: the server polls the drive through =udevadm= (no udev rules, no trigger
+route), scans with =makemkvcon --robot info=, rips every title into hidden
+staging inside the discs library, verifies the title count, and swaps the
+directory into place; the compat worker is woken directly.  Missing tools
+degrade the =rip= health component rather than the server.
+
+*** DONE Persist the =makemkvcon -r info= output as a first-class artifact
 
 This is the key fix.  =makemkvcon -r info= emits the structured =TINFO=/=CINFO=
 disc analysis — the exact data TheDiscDB stores and the matching key we need.
@@ -104,16 +128,72 @@ The current NixOS module *generates* it but writes it to a temp dir that is =rm
 -rf='d on success (surfaced to the journal only on *failure*), so it is thrown
 away for every rip that worked.
 
-Capture it at scan time and store it next to the MKVs.  It costs nothing at rip
-time; reconstructing it afterward is lossy or requires re-scanning the disc.
+Capture it at scan time and store it in the per-disc directory (next task).  It
+costs nothing at rip time; reconstructing it afterward is lossy or requires
+re-scanning the disc.
 
-*** TODO Optional attended identity confirmation at rip time
+Landed: =disc-info.txt= holds the raw dump and =disc.json= the parsed title
+table, udev facts, disc id, and structural fingerprint.
+
+*** DONE Rip each disc into its own directory keyed by label plus a disc id
+
+The obvious output name — disc label plus MakeMKV title index, which the NixOS
+module uses today — collides inside box sets.  Every disc of a season set can
+carry the same volume label and the same title layout, so the second disc
+silently replaces the first.  This has already destroyed rips: the first discs
+of Voltron: Legendary Defender seasons one and two, and the Chamber of Secrets
+feature, replaced by its own bonus disc.  A same-shaped overwrite leaves no
+trace at all.
+
+Rip into =<label>__<id>/= where =<id>= is unique per pressing and identical on
+every re-insert of the same disc, so the directory doubles as the "already
+ripped" check.  The preferred source is the disc filesystem's UUID as udev and
+=blkid= report it (=ID_FS_UUID=: the volume creation timestamp for ISO 9660, the
+volume set identifier for UDF).  It is readable before the slow MakeMKV scan and
+does not drift with MakeMKV versions.  Fall back to a hash of the =makemkvcon -r
+info= title lines, then to a rip timestamp; no step of the fallback chain may
+yield a directory that already exists.
+
+The id is a directory handle, not a matching key: TheDiscDB matching still runs
+on the structural fingerprint below, computed from the info dump persisted
+inside the directory.  Once identity resolves, rename to =<Title (Year)>__<id>/=
+so the tree is discoverable by name.  The suffix is what makes the rename safe,
+and the NFO, not the directory name, stays the authority Kodi reads.
+
+Persist beside the MKVs: the info dump, and the udev/=blkid= facts captured at
+rip time (label, UUID, volume set id, application id).
+
+Landed as described: udev UUID, then a hash of the =TINFO= lines, then a
+timestamp (which the policy refuses to reuse).  The rename to =<Title
+(Year)>__<id>= is the identity resolver's job.
+
+*** DONE Re-insert policy: skip, rescan, or rerip
+
+Default =skip=: a directory for this id exists, do nothing.  =rescan= refreshes
+only the sidecars via =makemkvcon -r info=, a matter of seconds, which is the
+common need while the metadata pipeline is still maturing.  =rerip= stages the
+whole rip into a temporary directory and swaps it in only on success.  No mode
+overwrites in place, deliberately or otherwise.
+
+Landed: =rerip= moves the previous tree to =.rip/replaced/<dir>__<ts>/= and a
+failed attempt's staging to =.rip/failed/=; a daily in-process sweep deletes
+both once older than =replaced_retention_days=.  =POST /api/rips= overrides the
+configured policy for the disc in the drive.
+
+*** DONE Optional attended identity confirmation at rip time
 
 When the disc is in the drive we know the most.  Offer an attended path: run the
 TMDB search, show the top few candidates, let the operator pick (or auto-accept
 a confident single match).  Resolve to a TMDB id *once*, as early as possible,
 and key everything off the id afterward.  Headless rips fall through to the
 resolver chain below.
+
+Landed: every rip is handed to the identity worker as soon as it is indexed;
+what the chain cannot settle waits in the Rips page's "Needs identification"
+list with the top candidates, a free-text re-search, and a one-click pick
+(=/api/discs/unresolved=, =/api/discs/{library}/identify=,
+=/api/discs/{library}/identity=).  The pick is keyed off the TMDB id from then
+on.
 
 ** Format and compatibility governance
 
@@ -193,7 +273,7 @@ The disc never carries the friendly metadata; only weak identity hints.  Resolve
 those to a TMDB id, then pull metadata from TMDB.  TheDiscDB provides the
 disc-structure → title bridge that TMDB itself does not.
 
-*** TODO Compute a structural fingerprint from MakeMKV =TINFO=
+*** DONE Compute a structural fingerprint from MakeMKV =TINFO=
 
 Fingerprint the *disc structure*, never the output MKV (the MKV is a derived
 artifact and varies by ripper/version/settings, so it is useless as a shared
@@ -203,6 +283,11 @@ count — are read off the disc and are deterministic per pressing.
 Crucially this is *uniform across DVD and Blu-ray*: MakeMKV normalizes both
 =VIDEO_TS= and =BDMV= into the same title model, so we sit on that abstraction
 rather than the format-specific on-disc structures.
+
+Landed: SHA-256 over the sorted (duration, chapter count) pairs of titles of ten
+minutes or more, versioned in the preimage, stored in =disc.json= and the
+=discs= table.  Fewer than two substantial titles is a weak fingerprint: a cache
+hit on one is a suggestion, not proof.
 
 *** TODO Match against a local TheDiscDB mirror
 
@@ -220,7 +305,7 @@ API, and it does no matching itself — that is ours to build.
 - Low-entropy discs (a single title, no extras) carry too little structure to
   match confidently.  Send those to the fallback rather than trusting a match.
 
-*** TODO Implement the resolver chain
+*** DONE Implement the resolver chain
 
 Ordered strategies, each returning an optional TMDB id; cheap deterministic
 layers first, interactive last:
@@ -230,6 +315,10 @@ layers first, interactive last:
 3. Clean title from Blu-ray =BDMV/META/DL/bdmt_*.xml= or the DVD volume label →
    TMDB text search, auto-accept a confident single match.
 4. Human / LLM "pick one of these candidates" fallback for the tail.
+
+Landed: strategies 3 and 4 (the cache, the TMDB text search with a strict
+auto-accept, and the attended pick) behind a =Strategy= seam; TheDiscDB and GTIN
+slot in ahead of the search under their own entries.
 
 *** TODO Model the barcode as a GTIN, not a "UPC"
 
@@ -244,7 +333,7 @@ it does not resolve to metadata by itself.
 - Name the field/type =Gtin= (Pascal initialism).  TheDiscDB calls its field
   "UPC" colloquially; feed it the GTIN-13.
 
-*** TODO Cache =fingerprint → tmdb_id= and backfill on miss
+*** DONE Cache =fingerprint → tmdb_id= and backfill on miss
 
 A one-table SQLite cache, seeded from TheDiscDB where it has coverage.  Hit →
 instant.  Miss → run the resolver chain, then write the result back so the next
@@ -252,7 +341,11 @@ encounter of that exact pressing is free.  A fingerprint identifies "this exact
 disc," so a *different* pressing of a known title is a fresh miss (then cached)
 — inherent to disc-identity keys and acceptable.
 
-*** TODO TMDB client and NFO/artwork writer
+Landed as =identity.db= in the state directory — its own file, so the media
+index's drop-and-rescan policy cannot wipe it.  TheDiscDB seeding is still open
+under "Match against a local TheDiscDB mirror".
+
+*** DONE TMDB client and NFO/artwork writer
 
 - Resolve by id (=/find= external-id or a direct id lookup) for exact matches,
   and by =/search= for the bootstrap step.
@@ -263,7 +356,41 @@ disc," so a *different* pressing of a known title is a fresh miss (then cached)
   For anime specifically, AniDB / TheTVDB often map episodes better than TMDB —
   evaluate when we get there.
 
+Landed: =/search/movie= + =/search/tv= (multi-search accepts no year and returns
+people), =/movie= and =/tv= with credits, certifications, and external ids,
+posters and fanart, and =tmdb_language= for the Japanese case.  A TV disc gets a
+show-level =tvshow.nfo=; per-episode mapping is its own entry below.
+
+*** TODO Per-episode NFO mapping for TV discs
+
+A series disc resolves to the show and gets =tvshow.nfo=, but its titles are not
+mapped to episodes, so Kodi sees a show folder with unnamed files.  Mapping
+needs title-to-episode matching (durations and order against TMDB's season
+listing, or TheDiscDB's summaries where they exist); the season and disc number
+the label already yields are the starting point.
+
+*** TODO Re-seed the identity cache from NFOs during scans
+
+The cache only accelerates the next encounter of a pressing; if it is lost,
+every resolved disc still carries its identity in its NFO and its fingerprint in
+=disc.json=.  A scan pass that writes those pairs back into the cache would make
+it fully rebuildable.
+
+*** TODO Auto-identify legacy flat rips
+
+The identity worker only sees =disc.json= directories.  The pre-Loku backlog
+(flat =<label>_<title_tNN>.mkv= files) has no manifest and so never enters the
+queue; see the backlog section for the options.
+
 ** Backlog (already-ripped discs)
+
+Filenames cannot be trusted to delimit discs in the backlog.  Same-label box
+sets overwrote one another under the flat layout, so a label's surviving files
+can be the last disc plus stragglers from earlier ones.  A title index whose
+mtime predates lower indexes under the same label is the only visible tell; a
+same-shaped overwrite leaves none.  Inventory the backlog by content — title
+cards, frame sheets, or the structural fingerprint against a fresh disc scan —
+not by name.
 
 The existing rips discarded their =disc-info= logs (deleted on success), so the
 journal *cannot* be scraped to reconstruct TheDiscDB-format logs.  Options, none
@@ -318,12 +445,28 @@ library unchanged.
 
 * Cross-repo
 
-** NEXT Interim: stop discarding =disc-info.txt= in =makemkv-ripper.nix=
+** DONE Interim: per-disc rip directories in =makemkv-ripper.nix=
 
-In ~/dev/nix-config, until Loku owns ripping, change the NixOS module to persist
-the =makemkvcon -r info= output alongside the MKV output instead of writing it
-to a temp dir that is deleted on success.  Cheap change; prevents the go-forward
-rips from repeating the backlog problem.
+In ~/dev/nix-config, until Loku owns ripping, change the NixOS module to rip
+into the =<label>__<id>/= layout, persist the =makemkvcon -r info= output and
+the =blkid= facts inside it, and honour the skip/rescan/rerip re-insert policy
+(default skip).  Its current "already ripped" check tests a filename that is
+never written, which is how the overwrites happened; the directory check
+replaces it.  The unit also emits nothing to the journal, so rip history had to
+be reconstructed from file mtimes — fix that in the same pass.
+
+Superseded: Loku owns ripping now (see "Own the rip pipeline"), so the interim
+change to the NixOS module is moot; the remaining cross-repo work is the
+switch-over below.
+
+** TODO Switch silicon to Loku's built-in ripping
+
+In ~/dev/nix-config: enable =services.loku-server.rip= (library =movies=),
+disable =services.makemkv-ripper=, point =makemkv-updater= and
+=makemkv-keydb-updater= at the =loku-server= user with
+=HOME=/var/lib/loku-server= so =settings.conf= and =KEYDB.cfg= land where the
+unit looks, provide the TMDB key through agenix, and add =.rip/= to the restic
+exclude list.  Retire =makemkv-ripper.nix= once a real disc has gone through.
 
 ** TODO Fold library-directory validation into MergeConfig once it supports a validate hook
 
@@ -367,6 +510,45 @@ The durable fix is tracked at
 [[https://github.com/LoganBarnett/rust-template/issues/94]]; when it lands via
 compliance sync, delete the local overlay and pass plain =commonArgs= to
 =mkMuslPackages= again.
+
+** TODO Drop the local zig archiver shim once the zig helpers set =AR= themselves
+
+The zig-cross release variants (=-gnu= portable glibc and both darwin cross
+builds) drive C compiles through =cargo zigbuild=, whose binary exports an
+=AR_<target>= wrapper under the per-derivation =$HOME/.cache= unless one is
+already set, while crane's deps step first runs a plain =cargo check= with it
+unset.  The =cc= crate marks =AR_<target>= rerun-if-env-changed, so the drift
+re-runs every C build script into the same =OUT_DIR= — fatal for
+=libsqlite3-sys=, which cannot overwrite the read-only bindings file its first
+run copied.  rust-template's helpers pre-set =CC=/=CXX= to stable store-path
+wrappers but not =AR=, so =flake.nix= here carries an interim
+=zigCrossCommonArgs= overlay pinning =AR_<target>= to a =cargo-zigbuild zig ar=
+wrapper for both helpers.
+
+The durable fix is tracked at
+[[https://github.com/LoganBarnett/rust-template/issues/95]]; when it lands via
+compliance sync, delete the overlay and pass plain =commonArgs= to
+=mkGnuPortablePackages= and =mkDarwinCrossPackages= again.
+
+** TODO Drop the config-file plumbing for =baseUrl= and OIDC once the helpers' env prefix matches the binary
+
+rust-template's =mkNixosService= and =mkDarwinService= export the service's
+settings as environment variables prefixed with the /service/ name
+(=loku_server_*=), but the binary's =MergeConfig= derives its prefix from
+=app_name= (=loku_*=), so none of those variables are read.  The modules here
+render =base_url=, =oidc_issuer=, and =oidc_client_id= into the generated config
+file instead.  When the helpers take an app-name (or env-prefix) argument and a
+compliance check covers it, drop those keys from =nix/modules/config-file.nix=
+and let the helper's environment carry them.
+
+** TODO Drop the =/healthz= override once the darwin health check targets the foundation's endpoint
+
+=mkDarwinService= defaults =healthCheck.url= to =/health=, but the foundation
+serves =/healthz=, so an enabled agent would 404 and try to kill a healthy
+server; =nix/modules/darwin-server.nix= sets the URL to =/healthz= with
+=mkDefault=.  The agent's kill path also reads =/var/run/loku-server/pid=, which
+nothing writes, so a failed check cannot restart the service today.  Both belong
+upstream; once fixed there, delete the override.
 
 * DONE Split the browse Entry enum into separate video and directory types
 

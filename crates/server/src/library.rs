@@ -21,6 +21,16 @@ pub enum LibraryKind {
   Discs,
 }
 
+impl LibraryKind {
+  /// The config-file spelling, for messages that name a kind.
+  pub fn as_str(self) -> &'static str {
+    match self {
+      LibraryKind::Downloads => "downloads",
+      LibraryKind::Discs => "discs",
+    }
+  }
+}
+
 /// A validated library root: the name is URL-safe and unique, and the path
 /// existed at config-resolution time.
 #[derive(Debug, Clone)]

@@ -252,7 +252,7 @@ async fn watcher_folds_filesystem_changes_into_the_index() {
     libraries,
     last_scan.clone(),
     None,
-    Arc::new(tokio::sync::Notify::new()),
+    loku_server::index::wakes::Wakes::new(),
   )
   .unwrap();
 
@@ -270,6 +270,13 @@ async fn watcher_folds_filesystem_changes_into_the_index() {
   // An in-progress download must not become an entry.
   eprintln!("stage: part file");
   fs::write(dir.path().join("partial.mp4.part"), b"x").unwrap();
+  tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+  assert_eq!(index.video_count(None).await.unwrap(), 2);
+
+  // Rip staging under a hidden directory must not become an entry either.
+  eprintln!("stage: hidden staging file");
+  fs::create_dir_all(dir.path().join(".rip/staging/x")).unwrap();
+  fs::write(dir.path().join(".rip/staging/x/staged.mkv"), b"x").unwrap();
   tokio::time::sleep(std::time::Duration::from_secs(3)).await;
   assert_eq!(index.video_count(None).await.unwrap(), 2);
 
@@ -477,4 +484,306 @@ async fn schema_version_mismatch_rebuilds_the_index() {
     0,
     "a version mismatch must drop and rebuild the schema"
   );
+}
+
+// ── per-disc directories ────────────────────────────────────────────────────
+
+use common::write_disc_dir;
+use loku_server::identity::{IdentitySource, IdentityState, TmdbKind};
+use loku_server::index::store::ProbeCandidate;
+
+#[tokio::test]
+async fn hidden_directories_are_invisible_to_the_scan() {
+  let dir = tempfile::tempdir().unwrap();
+  fs::create_dir_all(dir.path().join(".rip/staging/x")).unwrap();
+  fs::write(dir.path().join(".rip/staging/x/a.mkv"), b"x").unwrap();
+  fs::create_dir_all(dir.path().join(".hidden")).unwrap();
+  fs::write(dir.path().join(".hidden/b.mkv"), b"x").unwrap();
+  fs::write(dir.path().join(".dotfile.mkv"), b"x").unwrap();
+  fs::create_dir_all(dir.path().join("visible")).unwrap();
+  fs::write(dir.path().join("visible/c.mkv"), b"x").unwrap();
+
+  let index = Index::open_in_memory().await.unwrap();
+  let libraries = vec![library("discs", dir.path(), LibraryKind::Discs)];
+  let stats = scan::scan_all(&index, &libraries).await.unwrap();
+  assert_eq!(stats.videos, 1, "only the visible video indexes");
+  assert!(index
+    .video("discs", "visible/c.mkv")
+    .await
+    .unwrap()
+    .is_some());
+}
+
+#[tokio::test]
+async fn disc_directory_indexes_as_one_set_keyed_on_the_directory() {
+  let root = tempfile::tempdir().unwrap();
+  write_disc_dir(
+    root.path(),
+    "VOLTRON_S1_D1",
+    "uuid-1",
+    &[(1300, 5), (1310, 5)],
+  );
+
+  let index = Index::open_in_memory().await.unwrap();
+  let libraries = vec![library("discs", root.path(), LibraryKind::Discs)];
+  scan::scan_all(&index, &libraries).await.unwrap();
+
+  let t00 = index
+    .video("discs", "VOLTRON_S1_D1__uuid-1/title_t00.mkv")
+    .await
+    .unwrap()
+    .expect("title indexed");
+  assert_eq!(t00.disc_set.as_deref(), Some("VOLTRON_S1_D1__uuid-1"));
+  assert_eq!(t00.disc_title_index, Some(0));
+  assert_eq!(t00.title.as_deref(), Some("VOLTRON S1 D1"));
+  assert_eq!(t00.title_source, Some(TitleSource::DiscLabel));
+
+  let disc = index
+    .disc("discs", "VOLTRON_S1_D1__uuid-1")
+    .await
+    .unwrap()
+    .expect("disc row");
+  assert_eq!(disc.label, "VOLTRON_S1_D1");
+  assert_eq!(disc.disc_id, "uuid-1");
+  assert_eq!(disc.title, "VOLTRON S1 D1");
+  assert_eq!(disc.identity_state, IdentityState::Unresolved);
+  assert_eq!(disc.fingerprint_titles, 2);
+  assert!(disc.fingerprint.is_some());
+  assert!(disc.poster_rel_path.is_none());
+
+  // Searching the label finds every title on the disc.
+  assert_eq!(search_one(&index, "voltron").await.len(), 2);
+}
+
+#[tokio::test]
+async fn disc_directory_reads_identity_back_from_its_nfo() {
+  let root = tempfile::tempdir().unwrap();
+  let dir = write_disc_dir(root.path(), "MATRIX", "uuid-2", &[(8160, 30)]);
+  let index = Index::open_in_memory().await.unwrap();
+  let libraries = vec![library("discs", root.path(), LibraryKind::Discs)];
+  scan::scan_all(&index, &libraries).await.unwrap();
+  assert_eq!(
+    index
+      .disc("discs", "MATRIX__uuid-2")
+      .await
+      .unwrap()
+      .unwrap()
+      .identity_state,
+    IdentityState::Unresolved
+  );
+
+  fs::write(
+    dir.join("movie.nfo"),
+    "<movie><title>The Matrix</title><year>1999</year>\
+     <uniqueid type=\"tmdb\" default=\"true\">603</uniqueid></movie>",
+  )
+  .unwrap();
+  fs::write(dir.join("poster.jpg"), b"jpeg").unwrap();
+  scan::scan_all(&index, &libraries).await.unwrap();
+
+  let disc = index
+    .disc("discs", "MATRIX__uuid-2")
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(disc.title, "The Matrix");
+  assert_eq!(disc.year, Some(1999));
+  assert_eq!(disc.identity_state, IdentityState::Resolved);
+  assert_eq!(disc.identity_source, Some(IdentitySource::Nfo));
+  assert_eq!(disc.tmdb_id, Some(603));
+  assert_eq!(disc.tmdb_kind, Some(TmdbKind::Movie));
+  assert_eq!(
+    disc.poster_rel_path.as_deref(),
+    Some("MATRIX__uuid-2/poster.jpg")
+  );
+  let title = index
+    .video("discs", "MATRIX__uuid-2/title_t00.mkv")
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(title.title.as_deref(), Some("The Matrix"));
+  assert_eq!(title.title_source, Some(TitleSource::Nfo));
+  assert_eq!(title.year, Some(1999));
+
+  // Deleting the NFO re-queues the disc: the index follows the disk.
+  fs::remove_file(dir.join("movie.nfo")).unwrap();
+  scan::scan_all(&index, &libraries).await.unwrap();
+  let disc = index
+    .disc("discs", "MATRIX__uuid-2")
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(disc.identity_state, IdentityState::Unresolved);
+  assert_eq!(disc.tmdb_id, None);
+  assert_eq!(disc.title, "MATRIX");
+}
+
+#[tokio::test]
+async fn malformed_manifest_still_names_the_disc_from_its_directory() {
+  let root = tempfile::tempdir().unwrap();
+  let dir = root.path().join("Some_Show__abc");
+  fs::create_dir_all(&dir).unwrap();
+  fs::write(dir.join("disc.json"), b"{not json").unwrap();
+  fs::write(dir.join("title_t00.mkv"), b"x").unwrap();
+
+  let index = Index::open_in_memory().await.unwrap();
+  let libraries = vec![library("discs", root.path(), LibraryKind::Discs)];
+  scan::scan_all(&index, &libraries).await.unwrap();
+
+  let disc = index
+    .disc("discs", "Some_Show__abc")
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(disc.label, "Some_Show");
+  assert_eq!(disc.disc_id, "abc");
+  assert_eq!(disc.id_source, None);
+  assert_eq!(disc.title, "Some Show");
+  assert!(disc.fingerprint.is_none());
+}
+
+#[tokio::test]
+async fn removing_a_disc_directory_drops_its_row() {
+  let root = tempfile::tempdir().unwrap();
+  let dir = write_disc_dir(root.path(), "GONE", "uuid-3", &[(1300, 5)]);
+  let index = Index::open_in_memory().await.unwrap();
+  let libraries = vec![library("discs", root.path(), LibraryKind::Discs)];
+  scan::scan_all(&index, &libraries).await.unwrap();
+  assert!(index.disc("discs", "GONE__uuid-3").await.unwrap().is_some());
+
+  fs::remove_dir_all(&dir).unwrap();
+  scan::scan_all(&index, &libraries).await.unwrap();
+  assert!(index.disc("discs", "GONE__uuid-3").await.unwrap().is_none());
+  assert_eq!(index.video_count(None).await.unwrap(), 0);
+}
+
+/// Rows keyed under a renamed disc directory all move, including the ones
+/// the `LIKE` prefix match must not misread as wildcards.
+#[tokio::test]
+async fn rename_disc_dir_moves_every_row() {
+  let root = tempfile::tempdir().unwrap();
+  let old_name = "A_B%C__id";
+  let dir = write_disc_dir(root.path(), "A_B%C", "id", &[(1300, 5), (1310, 5)]);
+  let index = Index::open_in_memory().await.unwrap();
+  let libraries = vec![library("discs", root.path(), LibraryKind::Discs)];
+  scan::scan_all(&index, &libraries).await.unwrap();
+
+  let t00 = format!("{old_name}/title_t00.mkv");
+  let record = index.video("discs", &t00).await.unwrap().unwrap();
+  index.set_main_title("discs", old_name, &t00).await.unwrap();
+  let candidate = ProbeCandidate {
+    library: "discs".to_string(),
+    rel_path: t00.clone(),
+    size: record.size,
+    mtime: record.mtime,
+  };
+  index
+    .record_probe(&candidate, &ProbeResult::default())
+    .await
+    .unwrap();
+  index
+    .record_derivation_failure("discs", &t00, record.size, record.mtime, "boom")
+    .await
+    .unwrap();
+
+  let new_name = "Real Title (2016)__id";
+  fs::rename(&dir, root.path().join(new_name)).unwrap();
+  index
+    .rename_disc_dir("discs", old_name, new_name)
+    .await
+    .unwrap();
+
+  assert!(index.disc("discs", old_name).await.unwrap().is_none());
+  let disc = index.disc("discs", new_name).await.unwrap().unwrap();
+  assert_eq!(disc.parent, "");
+  let moved = index
+    .video("discs", &format!("{new_name}/title_t00.mkv"))
+    .await
+    .unwrap()
+    .expect("video row moved");
+  assert_eq!(moved.disc_set.as_deref(), Some(new_name));
+  assert_eq!(moved.parent, new_name);
+  assert_eq!(
+    moved.derivation_error.as_deref(),
+    Some("boom"),
+    "the failure row moved with the video"
+  );
+  assert!(index.video("discs", &t00).await.unwrap().is_none());
+  assert_eq!(index.video_count(None).await.unwrap(), 2);
+  assert!(
+    index
+      .cached_probe(&ProbeCandidate {
+        rel_path: format!("{new_name}/title_t00.mkv"),
+        ..candidate
+      })
+      .await
+      .unwrap()
+      .is_some(),
+    "the probe cache row moved with the video"
+  );
+  let browse = index.browse_directory("discs", "").await.unwrap();
+  assert_eq!(
+    browse.overrides.get(new_name).map(String::as_str),
+    Some(format!("{new_name}/title_t00.mkv").as_str()),
+    "the main-title override moved with the set"
+  );
+  assert_eq!(browse.discs.len(), 1);
+  assert_eq!(browse.discs[0].1.len(), 2);
+}
+
+/// The watcher may reconcile the renamed directory before the index rename
+/// runs (or after); both orders converge on one row per file.
+#[tokio::test]
+async fn rename_disc_dir_converges_regardless_of_watcher_order() {
+  let root = tempfile::tempdir().unwrap();
+  let dir = write_disc_dir(root.path(), "SHOW", "id", &[(1300, 5), (1310, 5)]);
+  let index = Index::open_in_memory().await.unwrap();
+  let libraries = vec![library("discs", root.path(), LibraryKind::Discs)];
+  scan::scan_all(&index, &libraries).await.unwrap();
+  let generation = index.current_generation().await.unwrap();
+
+  // Watcher first: fresh rows at the new path, old tree removed, then the
+  // rename runs against rows that are already gone.
+  // The watcher hands the scanner canonical paths, so the fixture must too.
+  let canonical_root = root.path().canonicalize().unwrap();
+  let renamed = canonical_root.join("Show (2016)__id");
+  fs::rename(&dir, &renamed).unwrap();
+  scan::reconcile_directory(&index, &libraries[0], &renamed, generation)
+    .await
+    .unwrap();
+  index.remove_tree("discs", "SHOW__id").await.unwrap();
+  index
+    .rename_disc_dir("discs", "SHOW__id", "Show (2016)__id")
+    .await
+    .unwrap();
+  assert_eq!(index.video_count(None).await.unwrap(), 2);
+  assert!(index
+    .disc("discs", "Show (2016)__id")
+    .await
+    .unwrap()
+    .is_some());
+
+  // Worker first: the rename runs, then the watcher's reconcile lands on
+  // rows that already moved.
+  let renamed_again = canonical_root.join("Show (2017)__id");
+  fs::rename(&renamed, &renamed_again).unwrap();
+  index
+    .rename_disc_dir("discs", "Show (2016)__id", "Show (2017)__id")
+    .await
+    .unwrap();
+  scan::reconcile_directory(&index, &libraries[0], &renamed_again, generation)
+    .await
+    .unwrap();
+  index.remove_tree("discs", "Show (2016)__id").await.unwrap();
+  assert_eq!(index.video_count(None).await.unwrap(), 2);
+  assert!(index
+    .disc("discs", "Show (2017)__id")
+    .await
+    .unwrap()
+    .is_some());
+  assert!(index
+    .disc("discs", "Show (2016)__id")
+    .await
+    .unwrap()
+    .is_none());
 }

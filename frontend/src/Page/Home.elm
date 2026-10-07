@@ -1,11 +1,10 @@
-module Page.Home exposing (Model, Msg, init, update, view)
+module Page.Home exposing (Model, Msg, init, subscriptions, update, view)
 
 import Api exposing (Library, LibraryKind(..))
 import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onInput, onSubmit)
-import Http
 import Route
 import Ui
 
@@ -24,7 +23,7 @@ type Libraries
 
 
 type Msg
-    = GotLibraries (Result Http.Error (List Library))
+    = GotLibraries (Result Api.Error (List Library))
     | QueryInput String
     | QuerySubmit
 
@@ -36,14 +35,19 @@ init key =
     )
 
 
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         GotLibraries (Ok libraries) ->
             ( { model | libraries = Loaded libraries }, Cmd.none )
 
-        GotLibraries (Err _) ->
-            ( { model | libraries = Failed "Could not load libraries" }
+        GotLibraries (Err err) ->
+            ( { model | libraries = Failed (Api.errorToString err) }
             , Cmd.none
             )
 
@@ -83,6 +87,10 @@ view model =
             Loaded libraries ->
                 div [ class "library-grid" ]
                     (List.map viewLibraryCard libraries)
+        , nav [ class "home-tools" ]
+            [ a [ href (Route.toString Route.Rips) ]
+                [ text "Disc rips and identification" ]
+            ]
         ]
 
 

@@ -1,5 +1,8 @@
 {
-  "template_sync_hashes": ["bd670248e619bb5ae401d095fd25d82131055c97"],
+  "template_sync_hashes": [
+    "bd670248e619bb5ae401d095fd25d82131055c97",
+    "e343806b07815d899897a7aab2e8604439551e59"
+  ],
   "windows-msvc": false,
   "apple-frameworks": true,
   "workspaces": {

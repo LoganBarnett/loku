@@ -3,6 +3,7 @@ module Page.Browse exposing
     , Msg
     , currentLocation
     , init
+    , subscriptions
     , update
     , updateParams
     , view
@@ -13,7 +14,6 @@ import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput, onSubmit)
-import Http
 import Route
 import Set exposing (Set)
 import Ui
@@ -36,17 +36,18 @@ type alias BrowseState =
     , page : Int
     , query : String
     , expanded : Set String
+    , error : Maybe String
     }
 
 
 type Msg
-    = GotListing (Result Http.Error DirListing)
+    = GotListing (Result Api.Error DirListing)
     | QueryInput String
     | QuerySubmit
     | GoToPage Int
     | ToggleSet String
     | PickMain String String
-    | MainPicked (Result Http.Error ())
+    | MainPicked (Result Api.Error ())
 
 
 init : Nav.Key -> Route.BrowseParams -> ( Model, Cmd Msg )
@@ -54,6 +55,11 @@ init key params =
     ( Loading key params
     , Api.getBrowse params.library params.path GotListing
     )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
 
 
 {-| The (library, path) this page is showing, so Main can tell a same-
@@ -99,6 +105,7 @@ update msg model =
                         , page = params.page
                         , query = ""
                         , expanded = Set.empty
+                        , error = Nothing
                         }
                     , Cmd.none
                     )
@@ -111,7 +118,7 @@ update msg model =
                     ( model, Cmd.none )
 
         GotListing (Err err) ->
-            ( Failed (httpErrorToString err), Cmd.none )
+            ( Failed (Api.errorToString err), Cmd.none )
 
         QueryInput query ->
             case model of
@@ -197,7 +204,7 @@ update msg model =
         MainPicked (Ok ()) ->
             case model of
                 Loaded state ->
-                    ( model
+                    ( Loaded { state | error = Nothing }
                     , Api.getBrowse
                         state.listing.library
                         state.listing.path
@@ -207,8 +214,15 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        MainPicked (Err _) ->
-            ( model, Cmd.none )
+        MainPicked (Err err) ->
+            case model of
+                Loaded state ->
+                    ( Loaded { state | error = Just (Api.errorToString err) }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
 
 
 view : Model -> Html Msg
@@ -252,6 +266,9 @@ view model =
             div []
                 [ viewBreadcrumb state.listing.library state.listing.path
                 , viewSearchBar state.query
+                , state.error
+                    |> Maybe.map Ui.errorText
+                    |> Maybe.withDefault (text "")
                 , div [ class "listing" ]
                     (List.map (viewEntry state.listing.library state.expanded) dirs
                         ++ List.map
@@ -363,7 +380,7 @@ viewEntry library expanded entry =
 viewDiscSet : Bool -> DiscSetEntry -> Html Msg
 viewDiscSet isExpanded set =
     div [ class "video-card" ]
-        [ Ui.videoCard set.main
+        [ Ui.discSetCard set
         , div [ class "disc-set-body" ]
             [ button
                 [ onClick (ToggleSet set.discSet), class "disc-set-toggle" ]
@@ -422,22 +439,3 @@ viewSetTitle set item =
                 ]
                 [ text "Set as main" ]
         ]
-
-
-httpErrorToString : Http.Error -> String
-httpErrorToString err =
-    case err of
-        Http.BadUrl url ->
-            "Bad URL: " ++ url
-
-        Http.Timeout ->
-            "Request timed out"
-
-        Http.NetworkError ->
-            "Network error"
-
-        Http.BadStatus status ->
-            "Server error: " ++ String.fromInt status
-
-        Http.BadBody body ->
-            "Unexpected response: " ++ body

@@ -12,14 +12,14 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tower_http::services::ServeDir;
 
+use crate::identity::resolver::Resolver;
 use crate::index::store::Index;
 use crate::library::Library;
 use crate::media::worker::ActiveDerivation;
+use crate::rip::RipHandles;
 use crate::routes;
 
-/// Application state: the foundation's shared base state plus the configured
-/// library roots, the media index the API routes read from, and the
-/// derivation worker's live status.
+/// Application state shared by every route.
 #[derive(Clone)]
 pub struct AppState {
   pub base: BaseServerState,
@@ -28,6 +28,11 @@ pub struct AppState {
   /// What the worker is deriving right now; a never-updated `None` channel
   /// when the worker is not running (no media tools).
   pub derivation_active: watch::Receiver<Option<ActiveDerivation>>,
+  /// The rip queue and drive status, absent when no `[rip]` table is
+  /// configured or the rip tools were not found.
+  pub rips: Option<RipHandles>,
+  /// The identity resolver, absent when no TMDB key is configured.
+  pub identity: Option<Arc<Resolver>>,
 }
 
 impl AppState {
@@ -69,6 +74,32 @@ pub fn app_routes(libraries: &[Library]) -> ApiRouter<AppState> {
           routes::disc_sets::set_main_handler,
           routes::disc_sets::set_main_docs,
         ),
+      )
+      .api_route(
+        "/api/rips",
+        get_with(routes::rips::status_handler, routes::rips::status_docs)
+          .post_with(routes::rips::trigger_handler, routes::rips::trigger_docs),
+      )
+      .api_route(
+        "/api/discs/unresolved",
+        get_with(
+          routes::discs::unresolved_handler,
+          routes::discs::unresolved_docs,
+        ),
+      )
+      .api_route(
+        "/api/discs/{library}/identify",
+        post_with(
+          routes::discs::identify_handler,
+          routes::discs::identify_docs,
+        ),
+      )
+      .api_route(
+        "/api/discs/{library}/identity",
+        post_with(
+          routes::discs::identity_handler,
+          routes::discs::identity_docs,
+        ),
       ),
     |router, library| {
       router.nest_service(
@@ -97,6 +128,48 @@ impl HealthCheck for MediaToolsCheck {
         ))
       },
     )
+  }
+}
+
+/// Reports whether the rip tools were found at startup.  Registered only
+/// when a `[rip]` table is configured; without the tools the server runs
+/// with ripping disabled — degraded, not broken.
+pub struct RipToolsCheck {
+  /// The startup detection failure, when there was one.
+  pub unavailable_reason: Option<String>,
+}
+
+impl HealthCheck for RipToolsCheck {
+  fn check(&self) -> ComponentHealth {
+    self.unavailable_reason.as_ref().map_or(
+      ComponentHealth::Healthy,
+      |reason| {
+        ComponentHealth::Degraded(format!(
+          "rip tools unavailable, disc ripping disabled: {reason}"
+        ))
+      },
+    )
+  }
+}
+
+/// Reports whether disc identity resolution is configured (a TMDB API key
+/// was supplied).  Without it rips complete unidentified — degraded, not
+/// broken.
+pub struct IdentityCheck {
+  /// Why resolution is off, when it is.
+  pub disabled_reason: Option<String>,
+}
+
+impl HealthCheck for IdentityCheck {
+  fn check(&self) -> ComponentHealth {
+    self
+      .disabled_reason
+      .as_ref()
+      .map_or(ComponentHealth::Healthy, |reason| {
+        ComponentHealth::Degraded(format!(
+          "disc identity resolution disabled: {reason}"
+        ))
+      })
   }
 }
 

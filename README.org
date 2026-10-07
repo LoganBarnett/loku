@@ -20,6 +20,12 @@ Key characteristics:
 - Full-text search across every library at once, over yt-dlp =info.json= and
   Kodi =.nfo= metadata plus filenames.
 - Multi-title disc rips grouped into one item with a pick-the-main-title flow.
+- Built-in disc ripping: insert a disc and MakeMKV rips every title into its own
+  per-disc directory, with the disc analysis kept beside the MKVs and a Rips
+  page showing progress and history.
+- Disc identity from TMDB: a ripped disc gets a Kodi =.nfo=, poster, and fanart
+  and is renamed to its title, automatically when the match is confident and
+  through a candidate picker on the Rips page otherwise.
 - In-browser playback with codec-aware source selection; masters that browsers
   cannot play get an automatically derived H.264/AAC compat copy (the original
   file is never modified).
@@ -81,10 +87,48 @@ kind = "discs"
 | =--state-dir= | =STATE_DIRECTORY= / | Where the media index database lives |
 |               | XDG state home      |                                      |
 | =--log-level= | =info=              | Logging verbosity                    |
+| =--tmdb-api-key-file= | (none)      | File holding a TMDB key; enables     |
+|               |                     | disc identity resolution             |
+| =--tmdb-language= | =en-US=         | TMDB language tag for metadata       |
 
 =ffmpeg= and =ffprobe= on =PATH= enable codec probing and compat derivation;
 without them Loku still browses and serves, with those features disabled and
 =/healthz= reporting a degraded =media-tools= component.
+
+** Ripping
+
+A =[rip]= table in the config file (see =config.example.toml=) turns on disc
+ripping.  The server polls the named drive through =udevadm=, and when a disc
+appears it runs =makemkvcon= to scan and rip every title into
+=<library>/<label>__<id>/= — the id is the disc filesystem's UUID, so box-set
+discs that share a label can never overwrite one another — then folds the
+directory into the index, where the compat worker picks it up like any other
+video.  Each directory keeps =disc-info.txt= (the raw MakeMKV analysis) and a
+=disc.json= manifest.  Re-inserting a ripped disc follows the configured policy
+(=skip=, =rescan=, or =rerip=), and =POST /api/rips= reruns the disc in the
+drive under any policy; the Rips page in the UI drives that.
+
+Requirements: =makemkvcon= with its licence key and the AACS =KEYDB.cfg= under
+=/.MakeMKV=, =udevadm= and =eject= on =PATH=, and read access to the drive (the
+=cdrom= group).  The NixOS module's =rip= options set all of this up.  Staging,
+replaced trees, and failed attempts live under the library's hidden =.rip/=
+directory, which the index ignores; point other consumers of the tree (Kodi,
+backups) away from it too.  Without the tools, ripping is disabled and
+=/healthz= reports a degraded =rip= component.
+
+** Identifying discs
+
+A TMDB API key (=tmdb_api_key_file=, or the NixOS module's =tmdbApiKeyFile=)
+turns on identity resolution.  Each ripped disc is fingerprinted from its
+MakeMKV title table and looked up in a local cache, then searched on TMDB by the
+title its label suggests.  A confident match is accepted on its own; anything
+ambiguous lands in the "Needs identification" section of the Rips page, where
+you can re-search and pick a candidate.  Either way the disc gets a Kodi
+=movie.nfo= or =tvshow.nfo=, =poster.jpg= and =fanart.jpg=, and its directory is
+renamed to =<Title (Year)>__<id>=; the NFO is what Kodi and Loku both read, so
+deleting it re-queues the disc.  Use =tmdb_language= (for example =ja-JP=) for
+titles in another language.  Without a key rips still complete unidentified and
+=/healthz= reports a degraded =identity= component.
 
 * Gotchas and Tradeoffs
 

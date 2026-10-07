@@ -9,7 +9,8 @@
 //!
 //! Reconciling writes only to the database, never the filesystem, so a
 //! flush triggered by our own derived-file writes terminates in one cycle
-//! rather than feeding back.
+//! rather than feeding back.  Hidden directories are invisible here as they
+//! are to the scanner, so rip staging under `.rip/` never surfaces mid-rip.
 //!
 //! The watchers rely on local-filesystem semantics (FSEvents/inotify); both
 //! deployment roots are local disks on the serving host, with NFS consumers
@@ -25,15 +26,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use tap::Tap;
 use thiserror::Error;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
 
 use crate::index::scan;
 use crate::index::store::{now_secs, Index};
+use crate::index::wakes::Wakes;
 use crate::library::Library;
 use crate::media::ffmpeg::FfmpegRunner;
 use crate::media::probe;
+use crate::rip::naming;
 
 /// Quiet period after the last event before a flush; long enough to absorb
 /// the bursts a download or rip finalization produces.
@@ -56,7 +59,7 @@ pub fn spawn_maintenance(
   libraries: Vec<Library>,
   last_scan_completed: Arc<AtomicI64>,
   ffmpeg: Option<Arc<dyn FfmpegRunner>>,
-  worker_wake: Arc<Notify>,
+  wakes: Wakes,
 ) -> Result<(), WatchError> {
   let (sender, receiver) = mpsc::unbounded_channel::<notify::Event>();
   let mut watcher = notify::recommended_watcher(
@@ -100,7 +103,7 @@ pub fn spawn_maintenance(
       roots,
       last_scan_completed,
       ffmpeg,
-      worker_wake,
+      wakes,
     },
   ));
   Ok(())
@@ -114,7 +117,7 @@ struct Maintenance {
   roots: Vec<(Library, PathBuf)>,
   last_scan_completed: Arc<AtomicI64>,
   ffmpeg: Option<Arc<dyn FfmpegRunner>>,
-  worker_wake: Arc<Notify>,
+  wakes: Wakes,
 }
 
 /// Fallback for when filesystem watching is unavailable (e.g. inotify
@@ -125,12 +128,12 @@ pub fn spawn_scan_only(
   libraries: Vec<Library>,
   last_scan_completed: Arc<AtomicI64>,
   ffmpeg: Option<Arc<dyn FfmpegRunner>>,
-  worker_wake: Arc<Notify>,
+  wakes: Wakes,
 ) {
   tokio::spawn(async move {
     initial_scan(&index, &libraries, &last_scan_completed).await;
     probe_if_available(&index, &libraries, ffmpeg.as_deref()).await;
-    worker_wake.notify_one();
+    wakes.notify_all();
   });
 }
 
@@ -185,7 +188,7 @@ async fn run(
 ) {
   initial_scan(&ctx.index, &ctx.libraries, &ctx.last_scan_completed).await;
   probe_if_available(&ctx.index, &ctx.libraries, ctx.ffmpeg.as_deref()).await;
-  ctx.worker_wake.notify_one();
+  ctx.wakes.notify_all();
 
   let mut debounce = Debounce::new(DEBOUNCE_QUIET);
   loop {
@@ -213,7 +216,7 @@ async fn run(
         flush(&ctx.index, &ctx.roots, debounce.take()).await;
         probe_if_available(&ctx.index, &ctx.libraries, ctx.ffmpeg.as_deref())
           .await;
-        ctx.worker_wake.notify_one();
+        ctx.wakes.notify_all();
       }
     }
   }
@@ -224,8 +227,8 @@ async fn run(
 /// itself may be a created or *vanished* directory (whose deletion event is
 /// often the only signal a whole tree is gone), while the parent covers the
 /// ordinary changed-file case.  Non-directory candidates are cheap no-ops at
-/// flush time.  Access-only events and in-progress `.part` files are
-/// ignored.
+/// flush time.  Access-only events, in-progress `.part` files, and anything
+/// under a hidden directory are ignored.
 fn dirty_directories(
   event: &notify::Event,
   roots: &[(Library, PathBuf)],
@@ -248,9 +251,25 @@ fn dirty_directories(
       roots
         .iter()
         .position(|(_, root)| dir.starts_with(root))
+        .filter(|library_index| {
+          roots
+            .get(*library_index)
+            .is_none_or(|(_, root)| !has_hidden_component(&dir, root))
+        })
         .map(|library_index| (library_index, dir))
     })
     .collect()
+}
+
+/// Whether any component of the path below the library root is hidden.  The
+/// root itself is exempt, so a library living under a dot-directory is not
+/// treated as hidden wholesale.
+fn has_hidden_component(path: &Path, root: &Path) -> bool {
+  path.strip_prefix(root).is_ok_and(|rel| {
+    rel
+      .components()
+      .any(|component| naming::is_hidden_component(component.as_os_str()))
+  })
 }
 
 /// Process the dirty candidates.  Candidates that still exist as directories
@@ -323,7 +342,7 @@ async fn reconcile_live(
   let Some((library, _)) = roots.get(library_index) else {
     return;
   };
-  stream::iter(walk_dirs(&dir))
+  stream::iter(scan::walk_visible_directories(&dir))
     .for_each(|subdir| async move {
       if let Err(error) =
         scan::reconcile_directory(index, library, &subdir, generation).await
@@ -358,21 +377,6 @@ fn prune_nested(dirty: Vec<(usize, PathBuf)>) -> Vec<(usize, PathBuf)> {
       }
       kept
     })
-}
-
-fn walk_dirs(dir: &Path) -> Vec<PathBuf> {
-  walkdir::WalkDir::new(dir)
-    .follow_links(false)
-    .into_iter()
-    .filter_map(|entry| match entry {
-      Ok(e) if e.file_type().is_dir() => Some(e.into_path()),
-      Ok(_) => None,
-      Err(error) => {
-        warn!(%error, "Skipping unreadable entry during event reconcile");
-        None
-      }
-    })
-    .collect()
 }
 
 /// Pure debounce state: absorbs dirty directories and exposes the deadline
@@ -436,6 +440,40 @@ mod tests {
     let taken = debounce.take();
     assert_eq!(taken.len(), 2, "same dir in same library collapses");
     assert!(debounce.deadline().is_none(), "take resets the deadline");
+  }
+
+  #[test]
+  fn dirty_directories_skip_hidden_paths_and_part_files() {
+    let roots = vec![(
+      Library {
+        name: "discs".to_string(),
+        path: PathBuf::from("/lib"),
+        kind: crate::library::LibraryKind::Discs,
+      },
+      PathBuf::from("/lib"),
+    )];
+    let event = |path: &str| {
+      notify::Event::new(notify::EventKind::Create(
+        notify::event::CreateKind::File,
+      ))
+      .add_path(PathBuf::from(path))
+    };
+    assert!(
+      dirty_directories(&event("/lib/.rip/staging/x/a.mkv"), &roots).is_empty(),
+      "rip staging must never dirty the index"
+    );
+    assert!(
+      dirty_directories(&event("/lib/x/a.mkv.part"), &roots).is_empty(),
+      "in-progress files are ignored"
+    );
+    let visible = dirty_directories(&event("/lib/x/a.mkv"), &roots);
+    assert_eq!(
+      visible,
+      vec![
+        (0, PathBuf::from("/lib/x/a.mkv")),
+        (0, PathBuf::from("/lib/x"))
+      ]
+    );
   }
 
   #[test]

@@ -18,11 +18,12 @@ use axum::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tap::Tap;
 use thiserror::Error;
 
-use crate::index::store::{BrowseData, IndexError, VideoRecord};
+use crate::identity::IdentityState;
+use crate::index::store::{BrowseData, DiscRecord, IndexError, VideoRecord};
 use crate::library::{Library, LibraryKind};
 use crate::media::worker::ActiveDerivation;
 use crate::routes::types::VideoItem;
@@ -53,18 +54,36 @@ pub struct DirEntry {
   pub path: String,
 }
 
-/// A multi-title disc rip presented as one item: the presumed main title
-/// plus every title on the disc.  Singleton rips stay plain videos.
+/// A disc rip presented as one item: the presumed main title plus every
+/// title on the disc.  A per-disc directory (one carrying a `disc.json`
+/// manifest) is always one entry, however many titles it holds; legacy flat
+/// rips group by filename prefix and singleton "sets" stay plain videos.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct DiscSetEntry {
-  /// The set's grouping key (the shared filename prefix), used when posting
-  /// a main-title override.
+  /// The set's grouping key — the directory path for a per-disc directory,
+  /// the shared filename prefix for a legacy flat rip — used when posting a
+  /// main-title override.
   pub disc_set: String,
-  /// Cleaned-up display title for the set as a whole.
+  /// The set's title: resolved from its NFO when identified, else cleaned
+  /// up from the disc label or rip filename.
   pub display_title: String,
   pub main: VideoItem,
   /// Every title in the set, main included, in disc order.
   pub titles: Vec<VideoItem>,
+  /// The disc directory's library-relative path (per-disc directories
+  /// only), for navigation.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub path: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub year: Option<i32>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub disc_id: Option<String>,
+  /// Library-relative path of the disc's poster art, served under
+  /// `/files/{library}/{path}`.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub poster_path: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub identity_state: Option<IdentityState>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -191,24 +210,39 @@ fn ensure_directory_exists(
 }
 
 /// Assemble the listing: subdirectories first (alphabetical), then videos
-/// and disc sets sorted together by display name.  Multi-title disc sets in
-/// discs-kind libraries collapse into one entry each; singleton "sets" are
-/// just videos, since a one-item card would be noise.
+/// and disc sets sorted together by display name.  Per-disc directories
+/// directly beneath the path become one entry each and are dropped from the
+/// subdirectory list; legacy multi-title sets in discs-kind libraries
+/// collapse into one entry each, while singleton legacy "sets" are just
+/// videos, since a one-item card would be noise.
 fn assemble_entries(
   library: &Library,
   rel_path: &str,
   data: BrowseData,
   active: Option<&ActiveDerivation>,
 ) -> Vec<Entry> {
-  let (sets, singles) = disc_set_groups(library.kind, data.videos);
+  let BrowseData {
+    videos,
+    subdirectories,
+    discs,
+    overrides,
+  } = data;
+  let disc_dir_names: HashSet<String> = discs
+    .iter()
+    .map(|(disc, _)| last_component(&disc.rel_path).to_string())
+    .collect();
+  let disc_items = discs.into_iter().filter_map(|(disc, records)| {
+    disc_dir_entry(disc, records, &overrides, active)
+  });
+
+  let (sets, singles) = disc_set_groups(library.kind, videos);
   let (multi_sets, singleton_sets): (BTreeMap<_, _>, BTreeMap<_, _>) =
     sets.into_iter().partition(|(_, records)| records.len() > 1);
 
-  let items = multi_sets
-    .into_iter()
-    .filter_map(|(set_name, records)| {
-      disc_set_entry(set_name, records, &data.overrides, active)
-    })
+  let items = disc_items
+    .chain(multi_sets.into_iter().filter_map(|(set_name, records)| {
+      disc_set_entry(set_name, records, &overrides, active)
+    }))
     .chain(
       singles
         .into_iter()
@@ -220,9 +254,20 @@ fn assemble_entries(
     .collect::<Vec<_>>()
     .tap_mut(|items| items.sort_by(|a, b| a.sort_name().cmp(b.sort_name())));
 
-  directory_entries(rel_path, data.subdirectories)
-    .chain(items)
-    .collect()
+  directory_entries(
+    rel_path,
+    subdirectories
+      .into_iter()
+      .filter(|name| !disc_dir_names.contains(name))
+      .collect(),
+  )
+  .chain(items)
+  .collect()
+}
+
+/// The last path component of a library-relative path.
+fn last_component(rel_path: &str) -> &str {
+  rel_path.rsplit('/').next().unwrap_or(rel_path)
 }
 
 /// Subdirectory entries with their paths joined onto the browse path.
@@ -268,17 +313,20 @@ fn disc_set_groups(
   )
 }
 
-/// Collapse one multi-title disc set into its entry.  The main title is the
+/// A set's titles in disc order together with its main title: the
 /// operator's override when present, else the largest file — the standing
-/// heuristic for "the actual movie" on a disc.
-fn disc_set_entry(
-  set_name: String,
+/// heuristic for "the actual movie" on a disc.  `None` only for an empty
+/// set, which grouping never yields but `first` keeps total rather than
+/// asserting at a distance; a stale override naming a vanished file falls
+/// back to the first title.
+fn set_titles(
+  set_key: &str,
   records: Vec<VideoRecord>,
   overrides: &HashMap<String, String>,
   active: Option<&ActiveDerivation>,
-) -> Option<Entry> {
+) -> Option<(VideoItem, Vec<VideoItem>)> {
   let main_rel = overrides
-    .get(&set_name)
+    .get(set_key)
     .cloned()
     .or_else(|| {
       records
@@ -294,23 +342,62 @@ fn disc_set_entry(
     .into_iter()
     .map(|record| VideoItem::from_record(record, active))
     .collect();
-  // A stale override may name a vanished file; the first title stands in.
-  // Grouping never yields an empty set, but `first` keeps this total (and
-  // the return `Option`al) rather than asserting that at a distance.
   titles
     .iter()
     .find(|item| item.path == main_rel)
     .or_else(|| titles.first())
     .cloned()
-    .map(|main| {
+    .map(|main| (main, titles))
+}
+
+/// Collapse one legacy multi-title disc set (grouped by filename prefix)
+/// into its entry.
+fn disc_set_entry(
+  set_name: String,
+  records: Vec<VideoRecord>,
+  overrides: &HashMap<String, String>,
+  active: Option<&ActiveDerivation>,
+) -> Option<Entry> {
+  set_titles(&set_name, records, overrides, active).map(|(main, titles)| {
+    Entry::DiscSet(Box::new(DiscSetEntry {
+      display_title: main
+        .title
+        .clone()
+        .unwrap_or_else(|| disc::display_title(&set_name)),
+      disc_set: set_name,
+      main,
+      titles,
+      path: None,
+      year: None,
+      disc_id: None,
+      poster_path: None,
+      identity_state: None,
+    }))
+  })
+}
+
+/// One per-disc directory as an entry.  A directory whose titles have not
+/// been indexed yet (mid-reconcile) yields nothing rather than an empty
+/// card.
+fn disc_dir_entry(
+  disc: DiscRecord,
+  records: Vec<VideoRecord>,
+  overrides: &HashMap<String, String>,
+  active: Option<&ActiveDerivation>,
+) -> Option<Entry> {
+  set_titles(&disc.rel_path, records, overrides, active).map(
+    |(main, titles)| {
       Entry::DiscSet(Box::new(DiscSetEntry {
-        display_title: main
-          .title
-          .clone()
-          .unwrap_or_else(|| disc::display_title(&set_name)),
-        disc_set: set_name,
+        display_title: disc.title,
+        disc_set: disc.rel_path.clone(),
         main,
         titles,
+        path: Some(disc.rel_path),
+        year: disc.year,
+        disc_id: Some(disc.disc_id),
+        poster_path: disc.poster_rel_path,
+        identity_state: Some(disc.identity_state),
       }))
-    })
+    },
+  )
 }

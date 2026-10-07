@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# A stand-in for util-linux `eject` (`just run-fake-drive`).  This script
+# cannot unset FAKE_DISC_LABEL in the server's environment, and that variable
+# is where the udevadm stand-in reads the drive's contents, so ejecting only
+# logs.  Remove the disc by restarting `just run-fake-drive` without
+# FAKE_DISC_LABEL.
+set -o errexit -o nounset -o pipefail
+echo "fake-eject: $*" >&2

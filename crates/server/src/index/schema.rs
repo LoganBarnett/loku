@@ -1,17 +1,16 @@
 //! Media index schema.
 //!
-//! The index is a *derived* structure: everything in `videos` (and its FTS
-//! mirror) is rebuildable from the library filesystems and their sidecars.
-//! The only durable state of consequence is `disc_set_overrides` — the
-//! operator's "this is the main title" picks — plus two caches
-//! (`probe_cache`, `derivation_failures`) whose loss merely costs recompute.
-//! That is why versioned migrations are deliberately absent: on any
-//! `user_version` mismatch everything is dropped and rescanned, and the
-//! override loss is a two-click recovery.  Revisit if durable state grows.
+//! The index is a *derived* structure: everything in it is rebuildable from
+//! the library filesystems and their sidecars, or cheap enough to lose that
+//! recovery is a rescan plus a click or two.  That is why versioned
+//! migrations are absent: on any `user_version` mismatch everything is
+//! dropped and rescanned.  The fingerprint-to-identity cache is the
+//! exception, so it lives in its own file with its own version.  Revisit if
+//! durable state grows further.
 
 use std::time::Duration;
 
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 const CREATE_SQL: &str = "
 CREATE TABLE videos (
@@ -109,6 +108,52 @@ CREATE TABLE meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE discs (
+  library TEXT NOT NULL,
+  rel_path TEXT NOT NULL,
+  parent TEXT NOT NULL,
+  label TEXT NOT NULL,
+  disc_id TEXT NOT NULL,
+  id_source TEXT,
+  title TEXT NOT NULL,
+  year INTEGER,
+  poster_rel_path TEXT,
+  fingerprint TEXT,
+  fingerprint_titles INTEGER NOT NULL DEFAULT 0,
+  identity_state TEXT NOT NULL DEFAULT 'unresolved'
+    CHECK (identity_state IN
+      ('unresolved', 'needs_confirmation', 'resolved', 'failed')),
+  identity_source TEXT,
+  identity_error TEXT,
+  candidates_json TEXT,
+  identity_attempted_at INTEGER,
+  identified_at INTEGER,
+  tmdb_id INTEGER,
+  tmdb_kind TEXT,
+  last_seen INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (library, rel_path)
+);
+CREATE INDEX idx_discs_library_parent ON discs (library, parent);
+CREATE INDEX idx_discs_identity_state ON discs (identity_state);
+
+CREATE TABLE rips (
+  id INTEGER PRIMARY KEY,
+  device TEXT NOT NULL,
+  library TEXT NOT NULL,
+  dir_rel_path TEXT,
+  label TEXT,
+  disc_id TEXT,
+  policy TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  state TEXT NOT NULL,
+  progress_permille INTEGER NOT NULL DEFAULT 0,
+  current_op TEXT,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  error TEXT
+);
+CREATE INDEX idx_rips_started ON rips (started_at DESC, id DESC);
 ";
 
 const DROP_SQL: &str = "
@@ -121,6 +166,8 @@ DROP TABLE IF EXISTS probe_cache;
 DROP TABLE IF EXISTS disc_set_overrides;
 DROP TABLE IF EXISTS derivation_failures;
 DROP TABLE IF EXISTS meta;
+DROP TABLE IF EXISTS discs;
+DROP TABLE IF EXISTS rips;
 ";
 
 /// Prepare a freshly opened connection: pragmas, then drop-and-recreate the

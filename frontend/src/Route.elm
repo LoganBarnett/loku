@@ -35,6 +35,7 @@ type Route
     | Browse BrowseParams
     | Search SearchParams
     | Player PlayerParams
+    | Rips
     | NotFound
 
 
@@ -45,6 +46,7 @@ type Route
     /browse/discs/Movies     → Browse { library = "discs", path = "Movies" }
     /search?q=matrix         → Search { query = "matrix" }
     /player/discs/foo.mkv    → Player { library = "discs", path = "foo.mkv" }
+    /rips                    → Rips
 
 -}
 parse : Url -> Route
@@ -87,6 +89,9 @@ parse url =
                 { library = percentDecode library
                 , path = percentDecode path
                 }
+
+    else if url.path == "/rips" || url.path == "/rips/" then
+        Rips
 
     else
         NotFound
@@ -135,6 +140,9 @@ toString route =
 
         Player { library, path } ->
             "/player/" ++ Url.percentEncode library ++ "/" ++ encodePath path
+
+        Rips ->
+            "/rips"
 
         NotFound ->
             "/"
