@@ -6,6 +6,8 @@
 ** Fixes
 ** Breaking
 ** Maintenance
+* v0.48.0
+** Maintenance
 1. build(deps): Bump serde_json from 1.0.151 to 1.0.154
    (https://github.com/LoganBarnett/loku/pull/56)
 * v0.47.0
