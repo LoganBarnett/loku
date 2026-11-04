@@ -67,7 +67,7 @@ schemars = "0.9"
 # OIDC types.  Foundation performs discovery, but OidcConfig is threaded through
 # the server config and the impl_server_state! macro references
 # ::openidconnect::core::CoreClient.
-openidconnect = { version = "3", features = ["reqwest"] }
+openidconnect = { version = "4", features = ["reqwest"] }
 
 # Liberal parsing of Kodi .nfo sidecars (XML despite the extension); the
 # serialize feature enables the serde deserializer.
